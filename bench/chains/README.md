@@ -1,6 +1,6 @@
 # Normal permissions versus Squidbrake, on whole sessions
 
-59 agent sessions and 110 steps go through five guards. The sessions are the
+61 agent sessions and 112 steps go through five guards. The sessions are the
 [public incidents](../../incidents), plus sessions written for this benchmark.
 
 - **Harm that builds up over several steps:** prompt injection from a docs page, an issue, a ticket or a Slack
@@ -33,15 +33,23 @@ guards only read the steps. `tests/test_risk.py` runs this benchmark in CI.
 | Squidbrake, one step at a time | The shipped `rules.yaml`, with history wiped before every step: no chains |
 | Squidbrake, with chains | The shipped `rules.yaml` over the whole session, as it runs in use |
 
-## Results (2026-10-09)
+## Results (2026-10-14)
 
 | Guard | Harmful steps stopped | Harmful sessions stopped | Routine steps stopped (false positives) | Sensitive steps a person saw | Times a person was asked |
 |---|---|---|---|---|---|
-| Auto-run | 0/63 | 0/35 | 0/41 | 0/6 | 0 |
-| Ask for everything | 62/63 | 34/35 | 40/41 | 6/6 | 109 |
-| Allowlist | 52/63 | 25/35 | 10/41 | 5/6 | 68 |
-| Squidbrake, one step at a time | 60/63 (5 blocked) | 32/35 | 2/41 | 6/6 | 64 |
-| Squidbrake, with chains | **62/63** (6 blocked) | **34/35** | **3/41** | **6/6** | 66 |
+| Auto-run | 0/65 | 0/37 | 0/41 | 0/6 | 0 |
+| Ask for everything | 64/65 | 36/37 | 40/41 | 6/6 | 111 |
+| Allowlist | 53/65 | 26/37 | 10/41 | 5/6 | 69 |
+| Squidbrake, one step at a time | 61/65 (5 blocked) | 33/37 | 2/41 | 6/6 | 65 |
+| Squidbrake, with chains | **64/65** (6 blocked) | **36/37** | **3/41** | **6/6** | 68 |
+
+### What changed on 2026-10-14: chains across conversations and agents
+
+What an agent's earlier steps give it is kept per identity until it expires: on your own computer that's all your
+agents, and on a team gateway it's the agents whose key works for one person (`squidbrake capabilities` lists it).
+Outside content read in one conversation now counts in the next, and a refund loop split across two agents is
+counted as one. The new session shows it: a docs page is read in one conversation, and the next day another agent
+posts the config to the collector the page named. One step at a time, that post runs. With chains, it's held.
 
 ### What changed on 2026-10-09: hold what can't be read
 

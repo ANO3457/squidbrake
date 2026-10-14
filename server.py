@@ -69,6 +69,9 @@ import outbound
 import pilot
 import policy_edit
 import risk
+import integrity
+import selfguard
+import weekly
 import siem
 import signing
 import taint
@@ -466,7 +469,12 @@ events = Table(
     Column("proof_status", String(20)),             # did the change really happen? confirmed | mismatch | error
     Column("proof", Text),                          # JSON: what was checked, where, and what it found (proof.py)
     Column("brief", Text),                          # JSON: the AI approval brief {text, model, at} (advice only)
-    Column("decided_with", String(200)),            # how the person decided, e.g. "passkey: Pat's iPhone"
+    Column("decided_with", String(200)),
+    Column("decision_ms", Float),                   # how long the gateway took to decide (what the agent waited)
+    Column("feedback", String(10)),                 # a person's verdict on a hold or block: legit | right
+    Column("feedback_by", String(200)),
+    Column("feedback_at", String(32)),
+    Column("identity", String(200), index=True),    # who the agent acts for (identity_of): chains follow it            # how the person decided, e.g. "passkey: Pat's iPhone"
 )
 
 # Small key/value store for state all workers share: the emergency stop and notification settings.
@@ -540,6 +548,23 @@ devices = Table(
     Column("public_key", Text, nullable=False),               # JSON {"x": hex, "y": hex} (P-256)
     Column("sign_count", Integer),
     Column("last_used_at", String(32)),
+)
+
+# What an agent's earlier actions gave it, until it expires: the first step of each `after:` chain in rules.yaml
+# (backups switched off, ...), per identity. Chains are judged from here, across restarts, conversations and agents.
+capabilities = Table(
+    "capabilities", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("identity", String(200), index=True, nullable=False),
+    Column("capability", String(200), index=True, nullable=False),   # after:<sequence id>
+    Column("target", String(500)),                                   # what it was on (lowercase), if it says
+    Column("source_event", String(36), index=True, nullable=False),
+    Column("summary", Text),                                         # the step, in words
+    Column("agent", String(200)),
+    Column("client", String(200)),
+    Column("session_id", String(200)),
+    Column("created_at", String(32), nullable=False),
+    Column("expires_at", String(32), index=True, nullable=False),
 )
 
 # Every version of rules.yaml that made a decision, so any decision can be traced to the exact rules behind it.
@@ -798,6 +823,7 @@ TAINT_DEFAULTS = {
               "*pull_request_create*", "*pr_create*", "*transfer*", "*wire*", "*payout*", "*refund*", "*payment*create*",
               "*webhook*", "*upload*", "*share*", "*invite*", "*http_request*"],
     "lookback_hours": 24,
+    "scope": "identity",                # where outside content is remembered: identity (every conversation) | session
     "untrusted_destination": "review",  # sends to an address/URL/account found only in untrusted content
     "after_untrusted": "warn",          # sends anything out after untrusted content was read in this conversation
 }
@@ -816,9 +842,21 @@ COMMAND_DEFAULTS = {
     "hidden": "review",        # code that can't be read first: eval, curl | sh, base64 -d | bash, -EncodedCommand,
                                # inline programs (python -c, node -e, ...), a program named only when it runs
     "written_then_run": "review",  # runs a script the agent itself created in this conversation (read it first)
+    "edited_then_run": "warn",     # runs a script the agent changed in this conversation: flagged; review holds it
     "unknown": "warn",         # a program that isn't a common developer tool: recorded (shadow); "review" holds it
     "read_only": "off",        # "allow": commands that only look (ls, cat, grep, git status) run without asking
 }
+
+
+def _rule_mode(r: dict, rid: str) -> str | None:
+    """A rule's own `mode: enforce | observe` (None = the top-level mode)."""
+    m = r.get("mode")
+    if m is None:
+        return None
+    m = str(m).lower().replace("observe", "shadow")
+    if m not in ("enforce", "shadow"):
+        raise ValueError(f"{rid}: mode must be enforce or observe")
+    return m
 
 
 class Policy:
@@ -895,19 +933,19 @@ class Policy:
             after, count = r.get("after"), r.get("count")
             if not after and not count:
                 raise ValueError(f"sequences.{rid}: needs `after:` or `count:`")
-            seq = {"id": rid, "action": action, "reason": r.get("reason") or rid,
+            seq = {"id": rid, "action": action, "reason": r.get("reason") or rid, "mode": _rule_mode(r, rid),
                    "match": cls._compile_match(r.get("match") or {}), "after": None, "count": None}
             if after:
                 scope = after.get("scope", "session")
-                if scope not in ("session", "agent", "all"):
-                    raise ValueError(f"sequences.{rid}: after.scope must be session | agent | all")
+                if scope not in ("session", "agent", "identity", "all"):
+                    raise ValueError(f"sequences.{rid}: after.scope must be session | agent | identity | all")
                 seq["after"] = {"match": cls._compile_match(after.get("match") or {}),
                                 "within_hours": float(after.get("within_hours", 24)),
                                 "same_target": bool(after.get("same_target", False)), "scope": scope}
             if count:
                 scope = count.get("scope", "agent")
-                if scope not in ("session", "agent", "all") or "more_than" not in count:
-                    raise ValueError(f"sequences.{rid}: count needs more_than, and scope session | agent | all")
+                if scope not in ("session", "agent", "identity", "all") or "more_than" not in count:
+                    raise ValueError(f"sequences.{rid}: count needs more_than, and scope session | agent | identity | all")
                 field = count.get("sum")
                 if field is not None and not (isinstance(field, str) and field.strip()):
                     raise ValueError(f"sequences.{rid}: count.sum must be an input field name")
@@ -972,7 +1010,7 @@ class Policy:
         self.source, self.fingerprint = "", verify.rules_fingerprint("")
         self.mode, self.shadow_agents = "enforce", []
         self.upstreams: dict[str, str] = {}
-        self.when_unreachable, self.snapshots = "block", "required"
+        self.when_unreachable, self.snapshots, self.integrity = "block", "required", "alert"
         self.budgets: list[dict] = []
         self.proofs: list[dict] = []
 
@@ -1007,6 +1045,9 @@ class Policy:
                         "timeout_seconds": int(r.get("timeout_seconds", APPROVAL_TIMEOUT)),
                         "on_timeout": r.get("on_timeout", "deny"),
                         "approvers": [approvers] if isinstance(approvers, str) else approvers,
+                        # maker-checker: the person whose agent asked can't approve it, whatever Settings say
+                        "second_person": bool(r.get("second_person")),
+                        "mode": _rule_mode(r, r.get("id") or f"rule-{i}"),
                     })
                 default = data.get("default", "allow")
                 if default not in ("allow", "deny", "review") or any(r["action"] not in ("allow", "deny", "review") for r in rules):
@@ -1021,7 +1062,7 @@ class Policy:
                         raise ValueError(f"history_checks.{k} must be block, review, warn or off")
                 hc["company_domains"] = [d.lower().strip() for d in hc["company_domains"] or []]
                 cc = {**COMMAND_DEFAULTS, **(data.get("command_checks") or {})}
-                for k in (*COMMAND_EFFECT_KEYS, "written_then_run", "unknown"):
+                for k in (*COMMAND_EFFECT_KEYS, "written_then_run", "edited_then_run", "unknown"):
                     cc[k] = "off" if cc[k] is False else COMMAND_DEFAULTS[k] if cc[k] is True else str(cc[k]).lower()
                     if cc[k] not in ("block", "review", "warn", "off"):
                         raise ValueError(f"command_checks.{k} must be block, review, warn or off")
@@ -1038,21 +1079,27 @@ class Policy:
                         raise ValueError(f"taint_checks.{k} must be block, review, warn or off")
                 for k in ("untrusted", "sinks"):
                     tc[k] = [tc[k]] if isinstance(tc[k], str) else list(tc[k] or [])
+                if tc["scope"] not in ("identity", "session"):
+                    raise ValueError("taint_checks.scope must be identity or session")
                 dc = {**DATA_DEFAULTS, **(data.get("data_checks") or {})}
                 for k in DATA_EFFECT_KEYS:
                     dc[k] = "off" if dc[k] is False else DATA_DEFAULTS[k] if dc[k] is True else str(dc[k]).lower()
                     if dc[k] not in ("block", "review", "warn", "off"):
                         raise ValueError(f"data_checks.{k} must be block, review, warn or off")
                 dc["where"] = [dc["where"]] if isinstance(dc["where"], str) else list(dc["where"] or [])
-                mode = str(data.get("mode", "enforce")).lower()
+                mode = str(data.get("mode", "enforce")).lower().replace("observe", "shadow")
                 if mode not in ("enforce", "shadow"):
-                    raise ValueError("mode must be enforce or shadow")
+                    raise ValueError("mode must be enforce or observe (shadow)")
                 wu = data.get("when_unreachable", "block")
                 wu = "allow" if wu is True or str(wu).lower() == "allow" else \
-                    "block" if wu is False or str(wu).lower() in ("block", "deny") else None
+                    "block" if wu is False or str(wu).lower() in ("block", "deny") else \
+                    "block_risky" if str(wu).lower() == "block_risky" else None
                 if wu is None or any(str(r.get("when_unreachable", "block")).lower() not in ("allow", "block", "deny", "true", "false")
                                      for r in data.get("rules") or []):
-                    raise ValueError("when_unreachable must be block or allow")
+                    raise ValueError("when_unreachable must be block, block_risky or allow (a rule: block or allow)")
+                integ = str(data.get("integrity", "alert")).lower()
+                if integ not in ("alert", "fail_closed"):
+                    raise ValueError("integrity must be alert or fail_closed")
                 snaps = str(data.get("snapshots", "required")).lower() if data.get("snapshots") is not False else "off"
                 if snaps not in ("required", "best_effort", "off") or \
                         any(r["snapshot"] not in (None, "required", "best_effort", "off") for r in rules):
@@ -1065,7 +1112,7 @@ class Policy:
                 self.sequences, self.taint, self.data = sequences, tc, dc
                 self.source, self.fingerprint = source, verify.rules_fingerprint(source)
                 self.mode, self.shadow_agents = mode, shadow_agents
-                self.when_unreachable, self.snapshots = wu, snaps
+                self.when_unreachable, self.snapshots, self.integrity = wu, snaps, integ
                 self.budgets, self.proofs = budgets, proofs
                 self.default_reason = data.get("default_reason") or f"default {default}"
                 self.upstreams = {k: str(v).rstrip("/") for k, v in (data.get("upstreams") or {}).items()}
@@ -1077,9 +1124,14 @@ class Policy:
 
     DEFAULT_RULE = {"timeout_seconds": APPROVAL_TIMEOUT, "on_timeout": "deny", "approvers": None}
 
-    def shadow_for(self, source: str | None, client: str) -> bool:
-        """Shadow mode: record what would happen, but let it through (everything, or the agents listed)."""
+    def shadow_for(self, source: str | None, client: str, rule_id: str | None = None) -> bool:
+        """Shadow mode: record what would happen, but let it through (everything, or the agents listed). A rule or
+        sequence with its own `mode:` wins, so a team can enforce the catastrophic ones first and observe the rest."""
         self._maybe_reload()
+        rid = str(rule_id or "")
+        own = next((r["mode"] for r in self.rules if r["id"] == rid), None) or             next((q["mode"] for q in self.sequences if f"sequence:{q['id']}" == rid), None)
+        if own:
+            return own == "shadow"
         if self.mode == "shadow":
             return True
         return any(fnmatch.fnmatchcase((k or "").lower(), g.lower()) for g in self.shadow_agents for k in (source, client))
@@ -1546,14 +1598,15 @@ def command_signals(name: str, input: Any, metadata: dict | None = None) -> tupl
 
 
 WRITES_A_FILE = ("Write", "write_file", "create_file", "write_to_file", "Create", "fs_write")
+EDITS_A_FILE = ("Edit", "MultiEdit", "replace", "edit_file", "str_replace_editor", "str_replace_based_edit_tool")
 
 
 def written_then_run(conn, ev: "EventIn", client: str) -> list[dict]:
-    """A script the agent created in this conversation, now run: `python x.py` is as unreadable to a shell reading
-    as `python -c`, so a person reads it first (command_checks.written_then_run). Edits to existing files aren't
-    counted: running the project's own tests and scripts after changing them is everyday work."""
+    """A script the agent created or changed in this conversation, now run directly (`python x.py`, `./x.sh`): as
+    unreadable to a shell reading as `python -c`, so a person reads it first (command_checks.written_then_run).
+    Running tests (`pytest`, `npm test`) after editing the code isn't a script run, so it isn't counted."""
     cc = policy.commands
-    if cc["written_then_run"] == "off" or not ev.session_id             or not any(fnmatch.fnmatchcase(ev.name.lower(), t.lower()) for t in cc["tools"]):
+    if (cc["written_then_run"] == "off" and cc["edited_then_run"] == "off") or not ev.session_id             or not any(fnmatch.fnmatchcase(ev.name.lower(), t.lower()) for t in cc["tools"]):
         return []
     line = commands.command_of(ev.input)
     scripts = commands.read(line).scripts if line else []
@@ -1564,9 +1617,10 @@ def written_then_run(conn, ev: "EventIn", client: str) -> list[dict]:
     wanted = {norm(os.path.join(cwd, sp) if cwd and not os.path.isabs(sp) and not sp.startswith("~") else sp): sp
               for sp in scripts}
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+    names = (WRITES_A_FILE if cc["written_then_run"] != "off" else ()) +         (EDITS_A_FILE if cc["edited_then_run"] != "off" else ())
     rows = conn.execute(select(events.c.name, events.c.input).where(
         events.c.session_id == ev.session_id, events.c.created_at >= since, events.c.status.in_(("completed", "pending")),
-        events.c.name.in_(WRITES_A_FILE)).order_by(events.c.created_at.desc()).limit(200)).all()
+        events.c.name.in_(names)).order_by(events.c.created_at.desc()).limit(200)).all()
     for r in rows:
         try:
             inp = json.loads(r.input) if r.input else {}
@@ -1576,8 +1630,11 @@ def written_then_run(conn, ev: "EventIn", client: str) -> list[dict]:
         hit = wanted.get(norm(path)) or next((sp for sp in scripts if not cwd and path and
                                               os.path.basename(path.replace("\\", "/")) == os.path.basename(sp)), None)
         if hit:
-            return [{"check": "written_then_run_command", "effect": cc["written_then_run"],
-                     "message": f"This command runs {hit}, a script the agent wrote in this conversation. Read it "
+            edited = r.name in EDITS_A_FILE
+            return [{"check": "edited_then_run_command" if edited else "written_then_run_command",
+                     "effect": cc["edited_then_run" if edited else "written_then_run"],
+                     "message": f"This command runs {hit}, a script the agent "
+                                f"{'changed' if edited else 'wrote'} in this conversation. Read it "
                                 f"before it runs: {path}"}]
     return []
 
@@ -1595,16 +1652,87 @@ def record_policy_version(conn) -> None:
         conn.execute(policy_versions.insert().values(fingerprint=fp, first_seen=utcnow(), content=policy.source))
         audit(conn, "gateway", "policy.version", fp, sha256=hashlib.sha256(policy.source.encode()).hexdigest(),
               rules=len(policy.rules), sequences=len(policy.sequences))
+    backfill_capabilities(conn)
     _recorded_policies.add(fp)
+
+
+def _step_text(name: str, stored: Any) -> str:
+    """How a step reads: Bash `aws rds modify-db-instance ...`, or stripe.refund on ch_1."""
+    line = commands.command_of(stored) if stored is not None else None
+    target = _target(stored) if stored is not None else None
+    detail = f" `{line[:90]}`" if line else f" on {target[1]}" if target else ""
+    return f"{name}{detail}"
 
 
 def _step_phrase(row) -> str:
     """How an earlier step reads in a reason: Bash `aws rds modify-db-instance ...` (12 minutes ago)."""
-    stored = json.loads(row.input) if row.input else None
-    line = commands.command_of(stored) if stored is not None else None
+    return f"{_step_text(row.name, json.loads(row.input) if row.input else None)} ({_ago(row.created_at)})"
+
+
+def identity_of(client: str | None) -> str:
+    """Who an agent acts for, so a chain split across its conversations and agents is still one chain. On a person's
+    own computer every agent is that person; on a shared gateway, the person a key belongs to (Team: "works for")."""
+    if not (IN_DOCKER or PUBLIC_URL):
+        return "this-computer"
+    if keystore.enabled and not keystore.from_env and client:
+        info = keystore.info(client)
+        if info.get("owner"):
+            return f"person:{info['owner']}"
+        if info.get("kind") == "person":
+            return f"person:{client}"
+    return f"key:{client}"
+
+
+def grant_capabilities(conn, r: dict) -> None:
+    """What this action, now going ahead, gives the agent: the first step of every `after:` chain it matches."""
+    if r.get("status") not in ("completed", "pending") or r.get("kind") == "prompt":
+        return
+    stored = json.loads(r["input"]) if r.get("input") else None
+    values = {"kind": r["kind"], "name": r["name"], "source": r["source"], "client": r["client"],
+              "session_id": r["session_id"]}
     target = _target(stored) if stored is not None else None
-    detail = f" `{line[:90]}`" if line else f" on {target[1]}" if target else ""
-    return f"{row.name}{detail} ({_ago(row.created_at)})"
+    created = r["created_at"]
+    for seq in policy.sequences:
+        a = seq["after"]
+        if not a or not Policy.matches(a["match"], values, stored, r.get("input") or ""):
+            continue
+        cap = f"after:{seq['id']}"
+        if conn.execute(select(capabilities.c.id).where(capabilities.c.source_event == r["id"],
+                                                        capabilities.c.capability == cap)).first():
+            continue
+        expires = (datetime.fromisoformat(created.replace("Z", "+00:00")) + timedelta(hours=a["within_hours"])) \
+            .isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        conn.execute(capabilities.insert().values(
+            identity=r.get("identity") or identity_of(r["client"]), capability=cap,
+            target=target[1].lower() if target else None, source_event=r["id"], summary=_step_text(r["name"], stored),
+            agent=r["source"], client=r["client"], session_id=r["session_id"], created_at=created, expires_at=expires))
+
+
+def revoke_capabilities(conn, event_id: str) -> None:
+    """The step didn't happen after all (it failed): it gives nothing."""
+    conn.execute(delete(capabilities).where(capabilities.c.source_event == event_id))
+
+
+def backfill_capabilities(conn) -> None:
+    """New rules, or a database from before the table: work out what earlier steps still give."""
+    longest = max((q["after"]["within_hours"] for q in policy.sequences if q["after"]), default=0)
+    if not longest:
+        return
+    since = (datetime.now(timezone.utc) - timedelta(hours=longest)).isoformat().replace("+00:00", "Z")
+    for row in conn.execute(select(events).where(events.c.created_at >= since,
+                                                 events.c.status.in_(("completed", "pending")))
+                            .order_by(events.c.created_at.desc()).limit(5000)).all():
+        grant_capabilities(conn, dict(row._mapping))
+
+
+def active_capabilities(identity: str | None = None, limit: int = 200) -> list[dict]:
+    q = select(capabilities).where(capabilities.c.expires_at > utcnow())
+    if identity:
+        q = q.where(capabilities.c.identity == identity)
+    with engine.connect() as conn:
+        rows = conn.execute(q.order_by(capabilities.c.created_at.desc()).limit(limit)).all()
+    reasons = {f"after:{q['id']}": q["reason"] for q in policy.sequences}
+    return [{**dict(r._mapping), "chain": reasons.get(r.capability)} for r in rows]
 
 
 def sequence_signals(conn, ev: "EventIn", client: str) -> list[dict]:
@@ -1616,6 +1744,7 @@ def sequence_signals(conn, ev: "EventIn", client: str) -> list[dict]:
     input_text = ev.input if isinstance(ev.input, str) else json.dumps(ev.input, default=str, ensure_ascii=False)
     out: list[dict] = []
     now = datetime.now(timezone.utc)
+    ident = identity_of(client)
     for seq in seqs:
         if not Policy.matches(seq["match"], values, ev.input, input_text):
             continue
@@ -1628,27 +1757,24 @@ def sequence_signals(conn, ev: "EventIn", client: str) -> list[dict]:
         message = None
         if seq["after"]:
             a = seq["after"]
-            same_agent = and_(events.c.source == ev.source, events.c.client == client)
-            scope = {"session": events.c.session_id == ev.session_id if ev.session_id else same_agent,
-                     "agent": same_agent, "all": events.c.id.isnot(None)}[a["scope"]]
+            caps = capabilities.c
+            same_agent = and_(caps.agent == ev.source, caps.client == client)
+            scope = {"session": caps.session_id == ev.session_id if ev.session_id else same_agent,
+                     "agent": same_agent, "identity": caps.identity == ident, "all": true()}[a["scope"]]
             target = _target(redact(ev.input))    # compared with stored (redacted) copies
-            for r in earlier(a["within_hours"], scope):
-                if r.status not in ("completed", "pending"):      # only steps that actually went ahead
-                    continue
-                if not Policy.matches(a["match"], row_values(r), stored(r), r.input or ""):
-                    continue
-                prev = _target(stored(r))
-                if a["same_target"] and not (target and prev and prev[1].lower() == target[1].lower()):
-                    continue
+            q = select(capabilities).where(caps.capability == f"after:{seq['id']}", caps.expires_at > utcnow(), scope)
+            if a["same_target"]:      # only the same thing: an action without a target can't be on it
+                q = q.where(caps.target == target[1].lower()) if target else None
+            if q is not None and (r := conn.execute(q.order_by(caps.created_at.desc()).limit(1)).first()):
                 where = "" if r.session_id and r.session_id == ev.session_id else \
-                    " (in another conversation)" if r.source == ev.source else f" (by {r.source or 'another agent'})"
-                message, ref = f"{seq['reason']}. Because earlier{where}: {_step_phrase(r)}.", r.id
-                break
+                    " (in another conversation)" if r.agent == ev.source else f" (by {r.agent or 'another agent'})"
+                message, ref = f"{seq['reason']}. Because earlier{where}: {r.summary} ({_ago(r.created_at)}).", \
+                    r.source_event
         if seq["count"] and message is None:
             c = seq["count"]
             scope = {"session": events.c.session_id == ev.session_id if ev.session_id else events.c.source == ev.source,
                      "agent": and_(events.c.source == ev.source, events.c.client == client),
-                     "all": events.c.id.isnot(None)}[c["scope"]]
+                     "identity": events.c.identity == ident, "all": events.c.id.isnot(None)}[c["scope"]]
             target = _target(redact(ev.input))
             hits = []
             for r in earlier(c["within_hours"], scope):
@@ -1674,7 +1800,8 @@ def sequence_signals(conn, ev: "EventIn", client: str) -> list[dict]:
                                f"{who} in the last {span}.")
                     ref = hits[0].id if hits else None
             elif len(hits) >= c["more_than"]:
-                who = {"session": "in this conversation", "agent": "by this agent", "all": "across all agents"}[c["scope"]]
+                who = {"session": "in this conversation", "agent": "by this agent",
+                       "identity": "by your agents, in any conversation", "all": "across all agents"}[c["scope"]]
                 message = (f"{seq['reason']}. Because {len(hits)} like it ran {who} in the last {span} "
                            f"(limit {c['more_than']}); the latest: {_step_phrase(hits[0])}.")
                 ref = hits[0].id
@@ -1724,10 +1851,12 @@ def taint_signals(conn, ev: "EventIn", client: str) -> list[dict]:
     elif not _globbed(ev.name, tc["sinks"]):     # e.g. github.create_pull_request: a sink, even though "*pull_request*" reads
         return []
     since = (datetime.now(timezone.utc) - timedelta(hours=float(tc["lookback_hours"]))).isoformat().replace("+00:00", "Z")
-    scope = events.c.session_id == ev.session_id if ev.session_id else and_(events.c.source == ev.source,
-                                                                            events.c.client == client)
+    this_session = events.c.session_id == ev.session_id if ev.session_id else and_(events.c.source == ev.source,
+                                                                                   events.c.client == client)
+    scope = or_(this_session, events.c.identity == identity_of(client)) if tc["scope"] == "identity" else this_session
     rows = conn.execute(select(events.c.id, events.c.name, events.c.kind, events.c.input, events.c.output,
-                               events.c.created_at).where(scope, events.c.created_at >= since)
+                               events.c.created_at, events.c.session_id, events.c.source, events.c.client)
+                        .where(scope, events.c.created_at >= since)
                         .order_by(events.c.created_at.desc()).limit(300)).all()
 
     def untrusted(r) -> bool:
@@ -1751,12 +1880,15 @@ def taint_signals(conn, ev: "EventIn", client: str) -> list[dict]:
                 continue
             hit = next((r for r in outside if taint.appears_in(dest, r.output)), None)
             if hit and not any(taint.appears_in(dest, t) for t in trusted):
+                elsewhere = "" if (hit.session_id == ev.session_id if ev.session_id else True) else ", in another conversation"
                 out.append({"check": "untrusted_destination", "effect": tc["untrusted_destination"], "ref": hit.id,
                             "message": f"This sends to {dest['value']} ({dest['field']}), which appears in {hit.name} "
-                                       f"({_ago(hit.created_at)}) but not in anything you asked or in your own systems. "
+                                       f"({_ago(hit.created_at)}{elsewhere}) but not in anything you asked or in your own systems. "
                                        "Content from outside can carry hidden instructions (prompt injection)."})
                 break
-    if not out and tc["after_untrusted"] != "off":
+    here = (lambda r: r.session_id == ev.session_id) if ev.session_id else         (lambda r: r.source == ev.source and r.client == client)
+    outside = [r for r in outside if here(r)]
+    if not out and outside and tc["after_untrusted"] != "off":      # a plain flag: this conversation only
         names = list(dict.fromkeys(r.name for r in outside))
         out.append({"check": "after_untrusted", "effect": tc["after_untrusted"], "ref": outside[0].id,
                     "message": f"Earlier in this conversation the agent read content from outside "
@@ -1774,16 +1906,22 @@ def reported_effects(metadata: dict | None) -> str | None:
 
 
 def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
+    started = time.perf_counter()
     signals: list[dict] = []
     if spent := usage_from_metadata(ev.metadata):      # the hook reports model tokens with each action
         spent.source, spent.session_id = ev.source, ev.session_id
         record_usage(client, spent)
     already_done = ev.error is not None or ev.output is not None
+    # Squidbrake protecting itself (selfguard.py): checked in code, so no rules.yaml edit or shadow mode loosens it
+    guard = None if already_done else selfguard.check(ev.kind, ev.name, ev.input, ev.metadata, KEYS_PATH.parent)
     if stop := stopped_for(ev.source, client, ev.session_id):
         decision, rule = "deny", policy.DEFAULT_RULE
         rule_id = "session-stop" if stop.get("session") else "emergency-stop"
         reason = stop_message(stop)
         remind_if_still_stopped(stop, ev.name)
+    elif guard and guard["effect"] == "block":
+        decision, rule, rule_id, reason, signals = "deny", policy.DEFAULT_RULE, "self-protection:approval", \
+            guard["message"], [guard]
     elif not already_done and ev.kind != "prompt" and (over := budget_hit(ev.source, client)):
         decision, rule, rule_id, reason = "deny", policy.DEFAULT_RULE, f"budget:{over['budget']}", over["message"]
     else:
@@ -1796,7 +1934,7 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
             with engine.connect() as conn:
                 # Most telling first: a sequence names the step that caused it; history checks are specific to
                 # the business (who asked for this payment); taint and command checks are more general.
-                signals = sequence_signals(conn, ev, client)
+                signals = ([guard] if guard else []) + sequence_signals(conn, ev, client)
                 # A command that only looks isn't a change: running `git status` twice is not a duplicate.
                 signals += history_signals(conn, ev.name, redact(ev.input), to_stored_json(ev.input), ev.source,
                                            ev.session_id, is_change=decision == "review" and not only_reads,
@@ -1805,6 +1943,7 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
             blocking = next((s for s in signals if s["effect"] == "block"), None)
             needs_person = next((s for s in signals if s["effect"] == "review"), None)
             signal_id = lambda s: f"sequence:{s['rule']}" if s["check"] == "sequence" else \
+                f"self-protection:{s['check']}" if s["check"] in ("approval", "tamper") else \
                 f"command:{s['check']}" if s["check"].endswith("_command") else \
                 f"data:{s['check']}" if s["check"] in DATA_EFFECT_KEYS else \
                 f"taint:{s['check']}" if s["check"] in TAINT_EFFECT_KEYS else f"history:{s['check']}"
@@ -1831,10 +1970,16 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
     would = None
     # Shadow mode lets it through but records what would have happened. Stops and catastrophic commands still apply.
     if decision in ("deny", "review") and rule_id not in ("emergency-stop", "session-stop", "command:catastrophic_command") \
-            and not str(rule_id).startswith("budget:") and policy.shadow_for(ev.source, client):
+            and not str(rule_id).startswith(("budget:", "self-protection:")) and policy.shadow_for(ev.source, client, rule_id):
         would = decision
         reason = f"Shadow mode, allowed. Would have {'been blocked' if decision == 'deny' else 'waited for approval'}: {reason}"
         decision = "allow"
+    broken = state_get("integrity", {}).get("changes") if policy.integrity == "fail_closed" else None
+    if broken and not already_done and ev.kind != "prompt" and any(c["kind"] != "rules" for c in broken) and (
+            decision in ("deny", "review") or would or cannot_undo({"rule_id": rule_id, "signals": signals, "reason": reason})):
+        decision, would, rule_id = "deny", None, "integrity:fail-closed"
+        reason = (f"Squidbrake's own files changed ({integrity.describe(broken)}), so actions that wait for a person or "
+                  f"can't be undone are blocked until a person checks and runs: {CLI} integrity accept")
     already_ran = ev.error is not None or ev.output is not None
     if decision == "review" and already_ran:
         # A record-only event has already happened; there is nothing left to approve.
@@ -1880,17 +2025,28 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
         "signals": json.dumps(signals) if signals else None,
         "would": would,
         "risk": risk_score, "risk_why": json.dumps(risk_why) if risk_why else None,
+        "decision_ms": round((time.perf_counter() - started) * 1000, 2),
+        "identity": identity_of(client),
     }
     with audited_tx() as conn:
         record_policy_version(conn)
         conn.execute(events.insert().values(**row))
+        grant_capabilities(conn, row)
         audit(conn, client, "event.created", row["id"], rules=policy.fingerprint, name=ev.name, kind=ev.kind, source=ev.source,
               session_id=ev.session_id, status=status, decision=decision, rule_id=rule_id, reason=reason,
               input_sha256=_sha(row["input"]), output_sha256=_sha(row["output"]),
               signals=[f"{x['check']}:{x['effect']}" for x in signals] or None, would=would)
+        if rule_id == "self-protection:approval":    # high severity: an agent reaching for the approval path
+            audit(conn, client, "security.self_approval_attempt", row["id"], name=ev.name, source=ev.source,
+                  session_id=ev.session_id, reason=reason)
     audit_log.info(json.dumps({k: row[k] for k in ("id", "created_at", "client", "source", "session_id",
                                                     "kind", "name", "status", "rule_id")}))
     forwarder.emit(siem_record("decision", row))
+    if rule_id == "self-protection:approval":
+        forwarder.emit(siem_record("self_approval_attempt", row))
+        threading.Thread(target=notify_text, daemon=True, args=(
+            f"Squidbrake: {ev.source or client} tried to reach the approval path",
+            f"Blocked {ev.name}: {reason} Look at what this agent is doing.")).start()
     if decision != "deny" and any(Policy.matches(p, {"kind": ev.kind, "name": ev.name, "source": ev.source,
                                                      "client": client, "session_id": ev.session_id}, ev.input)
                                   for p in policy.proofs):
@@ -2318,7 +2474,8 @@ def decide(event_id: str, outcome: Literal["allow", "deny"], who: str, note: str
         if keystore.enabled and who == row.client:
             raise HTTPException(403, "a key cannot approve its own request")
         owner = keystore.info(row.client).get("owner") if keystore.enabled else None
-        if owner and owner == who and settings().get("second_person"):
+        per_rule = any(r["id"] == row.rule_id and r.get("second_person") for r in policy.rules)
+        if owner and owner == who and (settings().get("second_person") or per_rule):
             raise HTTPException(403, f"'{row.client}' is {who}'s own agent and second-person approval is on, "
                                      "so someone else has to decide")
         # Conditional update: if two approvers click at once, exactly one wins.
@@ -2328,6 +2485,8 @@ def decide(event_id: str, outcome: Literal["allow", "deny"], who: str, note: str
                  decided_by=who, decided_at=utcnow(), decision_note=note, decided_with=decided_with)).rowcount
         if not won:
             raise HTTPException(409, "event was decided by someone else a moment ago")
+        if outcome == "allow":
+            grant_capabilities(conn, dict(conn.execute(select(events).where(events.c.id == event_id)).first()._mapping))
         audit(conn, who, "event.approved" if outcome == "allow" else "event.rejected", event_id, note=note, via=via,
               **({"device_proof": kept_proof, "decided_with": decided_with} if kept_proof else {}))
         forwarder.emit(siem_record("approved" if outcome == "allow" else "rejected",
@@ -2375,6 +2534,8 @@ def complete_event(event_id: str, res: ResultIn) -> dict:
         ))
         audit(conn, None, f"event.{status}", event_id, output_sha256=_sha(output), error=res.error,
               duration_ms=res.duration_ms)
+        if status == "failed":
+            revoke_capabilities(conn, event_id)
     audit_log.info(json.dumps({"id": event_id, "status": status, "duration_ms": res.duration_ms}))
     if status == "completed" and policy.proofs:
         start_proof(event_id, res.output)          # the agent says it's done: look in the real system
@@ -2434,6 +2595,61 @@ async def _expiry_loop():
         except Exception:
             log.exception("approval expiry failed")
         await asyncio.sleep(2)
+
+
+def _integrity_inputs() -> tuple[Path, Path | None, dict[str, Path]]:
+    """rules.yaml, the installed package (not a checkout), and the agents' hook configs when they're on this computer."""
+    package = BASE_DIR if (BASE_DIR / "__init__.py").exists() else None
+    hooks: dict[str, Path] = {}
+    if not (IN_DOCKER or PUBLIC_URL):
+        import connect
+        hooks = {"claude-code": connect.settings_path(None),
+                 **{n: t["file"] for n, t in connect.hook_agents().items() if t["present"]}}
+    return RULES_PATH, package, hooks
+
+
+def check_integrity() -> list[dict]:
+    """Compare with the copy kept the first time; a new change is recorded once and sent where approvals go."""
+    now = {**integrity.current(*_integrity_inputs()), "version": VERSION}
+    changes = integrity.compare(KEYS_PATH.parent, now)
+    if changes and all(c["kind"] == "rules" or (c["kind"] == "hooks" and c["change"] == "added") for c in changes):
+        integrity.accept(KEYS_PATH.parent, now)      # a person's edits, a newly connected agent: the new normal
+        with audited_tx() as conn:
+            audit(conn, "gateway", "integrity.noted", None, changes=changes)
+        changes = []
+    seen = state_get("integrity", {}).get("changes") or []
+    if changes != seen:
+        with audited_tx() as conn:
+            state_set(conn, "integrity", {"changes": changes, "at": utcnow()})
+            if changes:
+                audit(conn, "gateway", "integrity.changed", None, changes=changes)
+        if new := [c for c in changes if c not in seen]:
+            notify_text("Squidbrake: its own files changed", f"{integrity.describe(new)}. If you did this, run: "
+                        f"{CLI} integrity accept. If not, look at what your agents did just before.")
+            forwarder.emit({"type": "integrity_changed", "time": utcnow(), "changes": new})
+    return changes
+
+
+def accept_integrity(who: str) -> None:
+    integrity.accept(KEYS_PATH.parent, {**integrity.current(*_integrity_inputs()), "version": VERSION})
+    with audited_tx() as conn:
+        state_set(conn, "integrity", {"changes": [], "at": utcnow()})
+        audit(conn, who, "integrity.accepted", None)
+
+
+def purge_expired_capabilities() -> None:
+    with engine.begin() as conn:
+        conn.execute(delete(capabilities).where(capabilities.c.expires_at <= utcnow()))
+
+
+async def _integrity_loop():
+    while True:
+        try:
+            await run_in_threadpool(purge_expired_capabilities)
+            await run_in_threadpool(check_integrity)
+        except Exception:
+            log.exception("integrity check failed")
+        await asyncio.sleep(60)
 
 
 CAUGHT_ORDER = {"blocked": 0, "rejected": 1, "would have been blocked": 2, "would have waited for a person": 3}
@@ -2568,7 +2784,8 @@ async def lifespan(app: FastAPI):
     app.state.mcp_http = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None), follow_redirects=False)
     if servers := mcp_servers():
         await run_in_threadpool(hub.sync, servers)
-    tasks = [asyncio.create_task(_expiry_loop()), asyncio.create_task(_digest_loop()), asyncio.create_task(_s3_loop())]
+    tasks = [asyncio.create_task(_expiry_loop()), asyncio.create_task(_digest_loop()), asyncio.create_task(_s3_loop()),
+             asyncio.create_task(_integrity_loop())]
     if RETENTION_DAYS > 0:
         tasks.append(asyncio.create_task(_retention_loop()))
     # usage counts for the pilot programme: does nothing unless this install joined one (squidbrake pilot join)
@@ -3200,8 +3417,9 @@ def policy_offline(who: str = Depends(auth)):
     First matching rule wins, as on the gateway; `default` covers everything else."""
     policy._maybe_reload()
     return {"client": who, "default": policy.when_unreachable, "fingerprint": policy.fingerprint,
-            "rules": [{"id": r["id"], "match": r["match_spec"], "when_unreachable": r["when_unreachable"] or policy.when_unreachable}
-                      for r in policy.rules]}
+            "default_action": policy.default, "shell_tools": policy.commands["tools"],
+            "rules": [{"id": r["id"], "match": r["match_spec"], "action": r["action"],
+                       "when_unreachable": r["when_unreachable"] or policy.when_unreachable} for r in policy.rules]}
 
 
 # ---- spend brake
@@ -3428,7 +3646,8 @@ def build_report(days: int) -> dict:
             "shadow": {"mode": policy.mode, "agents": policy.shadow_agents,
                        "would_block": sum(a["would_block"] or 0 for a in agents),
                        "would_hold": sum(a["would_hold"] or 0 for a in agents)},
-            "audit": verify_audit_chain()}
+            "audit": verify_audit_chain(), "week": weekly.build(engine, events, days),
+            "integrity": {"mode": policy.integrity, **state_get("integrity", {"changes": [], "at": None})}}
 
 
 CONTROL_CHANGES = ("team.", "settings.", "controls.", "policy.version")
@@ -3498,6 +3717,53 @@ def evidence_pack(days: int = Query(90, ge=1, le=3650), who: str = Depends(perso
         audit(conn, who, "audit.exported", None, format="evidence-pack", days=days)
     return Response(evidence.render_html(build_evidence(days, who)), media_type="text/html", headers={
         "Content-Disposition": f'inline; filename="squidbrake-evidence-pack-{datetime.now():%Y%m%d}.html"'})
+
+
+class FeedbackIn(BaseModel):
+    verdict: Literal["legit", "right"]                 # legit: it should have run (a false positive)
+
+
+def give_feedback(event_id: str, verdict: str, who: str) -> dict:
+    """A person says whether a hold or block was right. Counted per rule and per week (weekly.py)."""
+    with audited_tx() as conn:
+        row = conn.execute(select(events).where(events.c.id == event_id)).first()
+        if row is None:
+            raise HTTPException(404, "event not found")
+        if not (row.approval_deadline or row.would or (row.status == "denied" and not row.decided_by)):
+            raise HTTPException(409, "only actions Squidbrake held or blocked (or would have) can be marked")
+        conn.execute(update(events).where(events.c.id == event_id)
+                     .values(feedback=verdict, feedback_by=who, feedback_at=utcnow()))
+        audit(conn, who, "event.feedback", event_id, verdict=verdict, rule_id=row.rule_id)
+    return {"id": event_id, "feedback": verdict, "rule_id": row.rule_id}
+
+
+@app.post("/v1/events/{event_id}/feedback")
+def post_feedback(event_id: str, body: FeedbackIn, who: str = Depends(person)):
+    return give_feedback(event_id, body.verdict, who)
+
+
+@app.get("/v1/capabilities")
+def get_capabilities(identity: str | None = None, _: str = Depends(person)):
+    """What the agents' earlier steps give them right now, per identity, until each expires."""
+    return {"capabilities": active_capabilities(identity)}
+
+
+@app.get("/v1/integrity")
+def get_integrity(_: str = Depends(person)):
+    return {"mode": policy.integrity, **state_get("integrity", {"changes": [], "at": None})}
+
+
+@app.post("/v1/integrity/accept")
+def post_integrity_accept(who: str = Depends(admin)):
+    accept_integrity(who)
+    return {"changes": []}
+
+
+@app.get("/v1/reports/week")
+def report_week(days: int = Query(7, ge=1, le=366), format: Literal["json", "md"] = "json",
+                _: str = Depends(person)):
+    r = weekly.build(engine, events, days)
+    return Response(weekly.markdown(r), media_type="text/markdown") if format == "md" else r
 
 
 @app.get("/v1/reports/summary")
@@ -4325,6 +4591,21 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("evidence", help="write the evidence pack (a printable page for an auditor)")
     e.add_argument("--days", type=int, default=90, help="period to cover (default 90)")
     e.add_argument("--out", default=None, help="file to write (default squidbrake-evidence-pack-DATE.html)")
+    rp = sub.add_parser("report", help="the weekly report: actions, holds, blocks, false positives, latency, chains")
+    rp.add_argument("--week", action="store_true", help="the last 7 days (the default)")
+    rp.add_argument("--days", type=int, default=7)
+    rp.add_argument("--json", action="store_true", help="JSON instead of Markdown")
+    rp.add_argument("--out", help="write it to this file")
+    ig = sub.add_parser("integrity", help="has anything changed Squidbrake's hooks, rules or installed files?")
+    ig.add_argument("action", nargs="?", choices=["status", "accept"], default="status",
+                    help="accept: the changes are yours, take them as the new normal")
+    cp = sub.add_parser("capabilities", help="what the agents' earlier steps give them now (the chains in progress)")
+    cp.add_argument("--json", action="store_true")
+    au = sub.add_parser("audit", help="audit verify: check the tamper-evident record end to end")
+    au.add_argument("action", choices=["verify"])
+    fb = sub.add_parser("feedback", help="say whether a hold or block was right: feedback EVENT_ID legit|right")
+    fb.add_argument("event_id")
+    fb.add_argument("verdict", choices=["legit", "right"])
     pl = sub.add_parser("pilot", help="join or leave a pilot: share usage counts (never content) with the Squidbrake team")
     pl.add_argument("action", choices=["join", "leave", "status"])
     pl.add_argument("code", nargs="?", help="the pilot code you were given (join)")
@@ -4336,7 +4617,71 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     return {"run": _cli_run, "init": _cli_init, "resume": _cli_resume, "add-key": _cli_add_key, "remove-key": _cli_remove_key,
             "keys": _cli_keys, "verify": lambda a: verify.main([a.file]), "pilot": _cli_pilot,
-            "evidence": _cli_evidence, "lockdown": _cli_lockdown, "explain": _cli_explain}[args.cmd](args)
+            "evidence": _cli_evidence, "lockdown": _cli_lockdown, "explain": _cli_explain,
+            "report": _cli_report, "feedback": _cli_feedback, "integrity": _cli_integrity,
+            "audit": _cli_audit, "capabilities": _cli_capabilities}[args.cmd](args)
+
+
+def _cli_capabilities(args) -> int:
+    migrate(engine)
+    caps = active_capabilities()
+    if args.json:
+        print(json.dumps(caps, indent=2))
+        return 0
+    if not caps:
+        print("No chain in progress: no earlier step gives an agent anything right now.")
+    for c in caps:
+        print(f"{c['identity']}: {c['summary']} by {c['agent'] or c['client']} ({_ago(c['created_at'])}, until "
+              f"{c['expires_at'][:16]}). Starts: {c['chain'] or c['capability']}")
+    return 0
+
+
+def _cli_integrity(args) -> int:
+    migrate(engine)
+    if args.action == "accept":
+        accept_integrity("command-line")
+        print("Accepted: the hooks, rules and installed files as they are now are the new normal.")
+        return 0
+    changes = check_integrity()
+    if not changes:
+        print("Intact: hooks, rules and installed files are as they were.")
+        return 0
+    print(f"Changed: {integrity.describe(changes)}.\nIf you did this, run: {CLI} integrity accept")
+    return 1
+
+
+def _cli_audit(args) -> int:
+    migrate(engine)
+    r = verify_audit_chain()
+    if r.get("ok"):
+        print(f"Intact: {r.get('entries')} entries, every link checks.")
+        return 0
+    where = f" The first broken link is entry #{r['first_bad_seq']}." if r.get("first_bad_seq") else ""
+    print(f"BROKEN: {r.get('message', 'the record was changed')}.{where}")
+    return 1
+
+
+def _cli_report(args) -> int:
+    migrate(engine)
+    r = weekly.build(engine, events, 7 if args.week else args.days)
+    text = json.dumps(r, indent=2) if args.json else weekly.markdown(r)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"Written to {Path(args.out).resolve()}")
+    else:
+        print(text)
+    return 0
+
+
+def _cli_feedback(args) -> int:
+    migrate(engine)
+    try:
+        r = give_feedback(args.event_id, args.verdict, "command-line")
+    except HTTPException as e:
+        print(e.detail, file=sys.stderr)
+        return 1
+    print(f"Marked {r['id']} as {r['feedback']} (rule {r['rule_id'] or 'default'}).")
+    return 0
 
 
 def _cli_lockdown(args) -> int:

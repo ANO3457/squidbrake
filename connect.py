@@ -490,20 +490,25 @@ def hook_agents() -> dict[str, dict]:
 
     return {
         "cursor": {"present": (home / ".cursor").exists(), "file": home / ".cursor" / "hooks.json", "edit": cursor,
-                   "covers": "terminal commands, file reads, edits and deletes, and MCP tools"},
+                   "covers": "terminal commands, file reads, edits and deletes, and MCP tools",
+                   "misses": "edits on Cursor versions without preToolUse; Cursor's cloud background agents"},
         "gemini-cli": {"present": bool(shutil.which("gemini")) or (home / ".gemini" / "settings.json").exists(),
                        "file": home / ".gemini" / "settings.json",
                        "edit": grouped("BeforeTool", "run_shell_command|write_file|replace|read_file|read_many_files", 600000),
-                       "covers": "shell commands, file reads, writes and edits"},
+                       "covers": "shell commands, file reads, writes and edits",
+                       "misses": "MCP tools (unless connect wrapped the server), web_fetch, memory"},
         "codex": {"present": bool(shutil.which("codex")) or (home / ".codex").exists(), "file": home / ".codex" / "hooks.json",
                   "edit": grouped("PreToolUse", "Bash|shell|apply_patch|Edit|Write|mcp__.*", 600),
-                  "covers": "shell commands, edits and MCP tools"},
+                  "covers": "shell commands, edits and MCP tools",
+                  "misses": "everything until the hook is trusted in /hooks; Codex cloud tasks"},
         "vscode": {"present": (_user_dir() / "Code" / "User").exists() or (home / ".copilot").exists(),
                    "file": home / ".copilot" / "hooks" / "squidbrake.json", "edit": vscode,
-                   "covers": "Copilot agent mode: terminal commands, reads and edits"},
+                   "covers": "Copilot agent mode: terminal commands, reads and edits",
+                   "misses": "the Copilot coding agent that runs on GitHub"},
         "antigravity": {"present": (home / ".gemini" / "antigravity").exists() or (home / ".gemini" / "config").exists(),
                         "file": home / ".gemini" / "config" / "hooks.json", "edit": antigravity,
-                        "covers": "terminal commands, file reads and writes"},
+                        "covers": "terminal commands, file reads and writes",
+                        "misses": "nothing known"},
     }
 
 
@@ -615,7 +620,9 @@ def local_agents() -> list[dict]:
     on = set(connected_agents())
     found = [{"name": "claude-code", "present": bool(shutil.which("claude")) or (Path.home() / ".claude").exists()}]
     found += [{"name": n, "present": t["present"]} for n, t in hook_agents().items()]
-    return [{**a, "label": AGENT_LABELS.get(a["name"], a["name"]), "connected": a["name"] in on} for a in found]
+    covered = {"claude-code": ("every tool: commands, reads, edits, web and MCP tools", "nothing known")} |         {n: (t["covers"], t["misses"]) for n, t in hook_agents().items()}
+    return [{**a, "label": AGENT_LABELS.get(a["name"], a["name"]), "connected": a["name"] in on,
+             "checks": covered[a["name"]][0], "not_checked": covered[a["name"]][1]} for a in found]
 
 
 def set_agent(name: str, on: bool, url: str) -> None:
@@ -926,6 +933,22 @@ def doctor(args) -> int:
                            RESTART.get(name, f"restart {name}") + ", then ask its agent (in its chat, not by typing in "
                            "the terminal yourself) to run a terminal command, like: Run git status in the terminal. "
                            "Then run: squidbrake doctor", (log or {}).get("errors", [])))
+    covered = {"claude-code": ("every tool: commands, reads, edits, web and MCP tools", "nothing known")} |         {n: (t["covers"], t["misses"]) for n, t in hook_agents().items()}
+    for name, f in agents.items():
+        if f.exists() and name in covered:
+            print(f"  [-] {name} checks: {covered[name][0]}. Not checked: {covered[name][1]}")
+    if local:
+        try:
+            import integrity
+            import server
+            changes = integrity.compare(server.KEYS_PATH.parent, integrity.current(*server._integrity_inputs()))
+            if changes:
+                say("X", f"Squidbrake's own files changed: {integrity.describe(changes)}",
+                    "if you did this: squidbrake integrity accept. If not, look at what your agents did just before")
+            else:
+                say("OK", "Hooks, rules and installed files are as they were (integrity)")
+        except Exception as e:
+            say("!", f"Couldn't check Squidbrake's own files ({e})")
     for name, text, fix, errors in unused:
         if used:   # another agent already works through it: one you don't open isn't a problem
             print(f"  [-] {name}: connected, not used yet (fine if you don't use {name})")
@@ -979,6 +1002,8 @@ def connect_all(args) -> None:
         if not confirm("Continue?", args.yes):
             return
         print()
+    if getattr(args, "mode", None) and not args.remove:
+        set_mode(args.url, args.mode)
     # The first keys are made now and shown at the end, after the agents, where they're easy to find and copy
     created = None if args.remove else _first_keys(args.url)
     each = argparse.Namespace(url=args.url, key=args.key, remove=args.remove, yes=True, agent="all",
@@ -1003,11 +1028,28 @@ def connect_all(args) -> None:
           f"\n(or 15 minutes with the founder: {FOUNDER_CALL})")
     if steps:
         _next_step(args.url)
+    if steps and gateway_up(args.url):    # what is and isn't checked now, per agent (`setup` runs its own doctor)
+        doctor(argparse.Namespace(url=args.url, key=args.key, quick=True))
 
 
 # Only printed, never opened or sent: the team can't see who installs, so this is how people can find us
 FOUNDER_CALL = "https://calendly.com/pulkitbatra2024/new-meeting-1"
 TEAM_FORM = "https://pilots.squidbrake.com/team"
+
+
+def set_mode(url: str, mode: str) -> None:
+    """`mode: observe | enforce` in this computer's gateway rules.yaml (hot-reloaded). A gateway elsewhere: say how."""
+    if not url.startswith(LOCAL_URLS):
+        print(f"The gateway at {url} isn't on this computer: set `mode: {mode}` in its rules.yaml.")
+        return
+    import server
+    path = server.RULES_PATH
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    line = f"mode: {'shadow' if mode == 'observe' else 'enforce'}"
+    new, n = re.subn(r"(?m)^mode:[ \t]*\S+", line, text)
+    path.write_text(new if n else f"{line}\n{text}", encoding="utf-8")
+    print("Observe mode: nothing is blocked or held; what would have been is recorded (squidbrake report --week)."
+          if mode == "observe" else "Enforce mode: blocks and holds for real.")
 
 
 def _first_keys(url: str) -> dict[str, str] | None:
@@ -1067,6 +1109,9 @@ def main(argv: list[str] | None = None) -> None:
             s.add_argument("--agent", dest="only", action="append", metavar="AGENT",
                            help="only this one (repeat, or comma-separated): claude-code, cursor, codex, gemini-cli, "
                                 "vscode, antigravity")
+            s.add_argument("--mode", choices=["observe", "enforce"],
+                           help="observe: never block or hold, only record what would have happened (a trial week); "
+                                "enforce: block and hold for real. Sets `mode:` in the gateway's rules.yaml")
         elif name == "agents":
             s.add_argument("--agent", default="all", help="cursor, gemini-cli, codex, vscode, antigravity, or all (every one installed)")
             s.add_argument("--remove", action="store_true", help="take Squidbrake's hook out again")

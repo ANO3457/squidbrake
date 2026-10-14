@@ -28,21 +28,35 @@
 #   timeout_seconds  how long to wait for a person (default APPROVAL_TIMEOUT, 300)
 #   on_timeout       deny (default) | allow  - what happens if nobody decides in time
 #   approvers        who may decide: key names or roles, e.g. ["role:finance", "priya"]; default = any approver
-# A key can never approve its own request.
+#   second_person    true: the person whose agent asked can't approve it (maker-checker), even with
+#                    Settings > second-person approval off
+# A key can never approve its own request, and an agent can't reach the approval path at all (selfguard.py).
 
 default: review
 default_reason: This changes something, so a person has to approve it
 
-# enforce: block and hold for real. shadow: block and hold nothing, only record what would have happened
-# (Reports shows "would block" / "would hold"), which is the easy way to try Squidbrake on real work.
-# Stops and catastrophic commands (rm -rf /, wiping a drive) are enforced in shadow mode too.
+# enforce: block and hold for real. observe (or shadow): block and hold nothing, only record what would have happened
+# (Reports and `squidbrake report --week` show "would block" / "would hold"), the easy way to try Squidbrake on real
+# work. Stops, catastrophic commands (rm -rf /, wiping a drive) and an agent reaching for Squidbrake's own approval
+# path are enforced in observe mode too. A rule or sequence can set its own `mode: enforce | observe`, e.g. enforce
+# the catastrophic ones first and observe the rest.
 mode: enforce
 shadow_agents: []          # shadow mode for just these agents (source or key names, globs), e.g. ["new-bot*"]
 
-# While Squidbrake can't be reached: block (the default) or allow. Each rule can say its own with
-# `when_unreachable: allow` (e.g. reads). Agents keep a copy of these answers, so they follow them while it's down.
-# What runs while it's down isn't recorded, so allow only what you'd accept unrecorded.
-when_unreachable: block
+# While Squidbrake can't be reached:
+#   block_risky  what these rules let run on its own (reads, everyday coding work) still runs; anything that would
+#                wait for a person or be blocked, and commands that can't be undone or can't be read, are blocked
+#   block        everything is blocked (the safest; agents stop working until Squidbrake is back)
+#   allow        everything runs
+# Each rule can say its own with `when_unreachable: allow | block`. Agents keep a copy of these answers, so they
+# follow them while it's down. What runs while it's down isn't recorded: the tradeoff is in THREAT_MODEL.md.
+when_unreachable: block_risky
+
+# Squidbrake checks every minute that its hooks in each agent, this file and its installed program haven't changed.
+#   alert        a change is recorded and sent wherever approvals go
+#   fail_closed  also: until a person runs `squidbrake integrity accept`, actions that would wait for a person or
+#                can't be undone are blocked (a change to this file alone only alerts)
+integrity: alert
 
 # Undo copies: before an action that waits for a person, or a command that can't be undone, keep a copy of what it
 # changes (files and git changes on the agent's computer, the record behind an API call through /proxy, or what a
@@ -98,6 +112,9 @@ command_checks:
   hidden: review          # code that can't be read first: eval, curl ... | sh, base64 -d | bash, powershell -EncodedCommand,
                           # programs written inline (python -c, node -e, perl -e), a program named only when it runs
   written_then_run: review  # a script the agent created in this conversation, then runs (python x.py): read it first
+  edited_then_run: warn     # a script the agent changed in this conversation, then runs: flagged for you to see;
+                            # review holds it (safer: an edit can hide anything, but fixing a script and running it
+                            # is everyday work)
   unknown: warn           # a program that isn't a common developer tool: recorded so you can see what would wait;
                           # review holds them too
   read_only: allow        # commands that only look (ls, cat, grep, git status/log/diff) run without asking,
@@ -111,6 +128,7 @@ taint_checks:
   untrusted_destination: review   # sends to an address/URL/account found only in outside content
   after_untrusted: warn           # sends anything out after outside content was read in this conversation
   lookback_hours: 24
+  scope: identity                 # outside content read in one conversation still counts in the next (or: session)
   # untrusted: [...]  tools whose results are outside content (defaults: WebFetch, *fetch*, *inbox*, *issue*, *ticket* ...)
   # sinks: [...]      tools that send things out (defaults: *send*, *reply*, *publish*, *transfer*, *webhook*, *upload* ...)
   #                   Shell commands count as sinks when they upload (curl -d, scp, git push, ...).
@@ -126,9 +144,12 @@ data_checks:
 # Sequence rules judge an action by what came BEFORE it, and say which earlier step caused it.
 #   match   this action (same fields as rules: name, source, input_regex, input, ...)
 #   after   an earlier step that went ahead, within within_hours (default 24);
-#           scope: session (the same conversation, the default) | agent (any conversation of this agent) | all (any agent);
+#           scope: session (the same conversation, the default) | agent (any conversation of this agent) |
+#                  identity (any conversation of any agent working for the same person: on your own computer, all of
+#                  them; on a team gateway, the agents whose key "works for" that person) | all (any agent);
+#           the step is remembered until within_hours runs out, across restarts (`squidbrake capabilities` lists them);
 #           same_target: true = only if it was on the same thing (same charge, file, account ...)
-#   count   more than `more_than` earlier matching actions within within_hours; scope: session | agent | all;
+#   count   more than `more_than` earlier matching actions within within_hours; scope: session | agent | identity | all;
 #           sum: <field> = add up that input field (this action plus earlier ones) instead of counting actions
 #             (missing or non-numeric values count as 0); same_target: true = only earlier actions on the same thing
 #   action  deny | review | warn
@@ -148,7 +169,7 @@ sequences:
     action: deny
     reason: Too many refunds in a short time; the agent may be stuck in a loop
     match: { name: ["*refund*"] }
-    count: { more_than: 10, within_hours: 1, scope: agent }
+    count: { more_than: 10, within_hours: 1, scope: identity }   # a loop split across two agents still counts
 
   - id: mass-deletes
     action: review
