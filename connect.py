@@ -532,6 +532,8 @@ def agents(args) -> None:
             print(f"{name}: {t['file']} isn't plain JSON (comments?); skipped")
             continue
         if args.remove:
+            if not t["file"].exists():
+                continue
             before = json.dumps(data)
             t["edit"](data, None)
             if json.dumps(data) != before:

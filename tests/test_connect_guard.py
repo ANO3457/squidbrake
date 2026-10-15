@@ -87,6 +87,15 @@ def test_connect_all_and_undo(tmp_path, monkeypatch, capsys):
     assert not (home / ".codex" / "hooks.json").exists()
 
 
+def test_connect_all_remove_does_not_create_missing_cursor_config(tmp_path, monkeypatch):
+    home = _home(tmp_path, monkeypatch)
+    monkeypatch.setattr(connect.shutil, "which", lambda name: None)
+
+    connect.main(["all", "--remove", "--yes"])
+
+    assert not (home / ".cursor").exists()
+
+
 def _fake_codex(tmp_path, monkeypatch, trust):
     """A stand-in `codex` whose app-server answers hooks/list the way Codex does."""
     script = tmp_path / "fake_codex.py"
