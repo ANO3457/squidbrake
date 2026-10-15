@@ -129,6 +129,9 @@ command_checks:
 taint_checks:
   untrusted_destination: review   # sends to an address/URL/account found only in outside content
   after_untrusted: warn           # sends anything out after outside content was read in this conversation
+  after_untrusted_setup_edit: warn  # changes the agent's own setup (held by approve-agent-setup-changes) after outside
+                                    # content was read in the same conversation: names which content came first (#74);
+                                    # warn only, it never changes the hold into an allow
   lookback_hours: 24
   scope: identity                 # outside content read in one conversation still counts in the next (or: session)
   # untrusted: [...]  tools whose results are outside content (defaults: WebFetch, *fetch*, *inbox*, *issue*, *ticket* ...)

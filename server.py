@@ -819,7 +819,7 @@ HISTORY_DEFAULTS = {
 
 # Taint checks (rules.yaml `taint_checks:`): where is this action sending things, and did that come from content
 # someone else wrote (a web page, an email, an issue) rather than from the user or the company's own systems?
-TAINT_EFFECT_KEYS = ("untrusted_destination", "after_untrusted")
+TAINT_EFFECT_KEYS = ("untrusted_destination", "after_untrusted", "after_untrusted_setup_edit")
 TAINT_DEFAULTS = {
     "untrusted": ["WebFetch", "WebSearch", "*fetch*", "*browse*", "*scrape*", "*crawl*", "*web_search*", "*search_web*",
                   "*inbox*", "*read_email*", "*email_read*", "*get_email*", "*mail*read*", "*read*mail*", "*get_message*",
@@ -833,6 +833,9 @@ TAINT_DEFAULTS = {
     "scope": "identity",                # where outside content is remembered: identity (every conversation) | session
     "untrusted_destination": "review",  # sends to an address/URL/account found only in untrusted content
     "after_untrusted": "warn",          # sends anything out after untrusted content was read in this conversation
+    "after_untrusted_setup_edit": "warn",  # changes the agent's own setup (held by the guard-rail rule) after
+                                           # untrusted content was read in the same conversation; warn only, it never
+                                           # changes the decision (#74)
 }
 
 # Data checks (rules.yaml `data_checks:`): text an action puts where others read it (a PR, an issue, a comment, a chat
@@ -1871,17 +1874,32 @@ def data_signals(ev: "EventIn") -> list[dict]:
     return out
 
 
-def taint_signals(conn, ev: "EventIn", client: str) -> list[dict]:
-    """Does this action send something to a destination that only untrusted content mentioned? (see taint.py)"""
+def _edited_target(ev: "EventIn", line: str | None) -> str | None:
+    """What this action changes, for the approver: a file path from the input, or the shell command."""
+    inp = ev.input if isinstance(ev.input, dict) else {}
+    for key in ("file_path", "path", "file", "target", "filename"):
+        v = inp.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:200]
+    if line:
+        return line[:200]
+    if isinstance(ev.input, str) and ev.input.strip():
+        return ev.input.strip()[:200]
+    return None
+
+
+def taint_signals(conn, ev: "EventIn", client: str, held_setup_change: bool = False) -> list[dict]:
+    """Taint checks (see taint.py): where is this action sending things, or is it changing the agent's own setup
+    after reading content someone else wrote? held_setup_change = this action is already held by the guard-rail rule
+    for agent-setup changes; then a prior untrusted read adds information, never a decision."""
     tc = policy.taint
-    if tc["untrusted_destination"] == "off" and tc["after_untrusted"] == "off":
+    if not any(tc[k] != "off" for k in TAINT_EFFECT_KEYS):
         return []
     shell = _globbed(ev.name, policy.commands["tools"])
     line = commands.command_of(ev.input) if shell else None
-    if shell:
-        if not taint.sends_out(line):
-            return []
-    elif not _globbed(ev.name, tc["sinks"]):     # e.g. github.create_pull_request: a sink, even though "*pull_request*" reads
+    sends = taint.sends_out(line) if shell else _globbed(ev.name, tc["sinks"])
+    # e.g. github.create_pull_request: a sink, even though "*pull_request*" reads
+    if not sends and tc["after_untrusted_setup_edit"] == "off":
         return []
     since = (datetime.now(timezone.utc) - timedelta(hours=float(tc["lookback_hours"]))).isoformat().replace("+00:00", "Z")
     this_session = events.c.session_id == ev.session_id if ev.session_id else and_(events.c.source == ev.source,
@@ -1906,7 +1924,7 @@ def taint_signals(conn, ev: "EventIn", client: str) -> list[dict]:
     trusted = [r.input for r in rows if r.kind == "prompt" and r.input] + \
               [r.output for r in rows if r.output and r.kind != "prompt" and not untrusted(r)]
     out: list[dict] = []
-    if tc["untrusted_destination"] != "off":
+    if sends and tc["untrusted_destination"] != "off":
         # compared with what was stored, so with the same masking (an address keeps its domain and fingerprint)
         for dest in taint.destinations(redact(ev.input), redact(line) if line else line):
             if taint.own_domain(dest, policy.history["company_domains"]):
@@ -1921,12 +1939,21 @@ def taint_signals(conn, ev: "EventIn", client: str) -> list[dict]:
                 break
     here = (lambda r: r.session_id == ev.session_id) if ev.session_id else         (lambda r: r.source == ev.source and r.client == client)
     outside = [r for r in outside if here(r)]
-    if not out and outside and tc["after_untrusted"] != "off":      # a plain flag: this conversation only
+    if sends and not out and outside and tc["after_untrusted"] != "off":      # a plain flag: this conversation only
         names = list(dict.fromkeys(r.name for r in outside))
         out.append({"check": "after_untrusted", "effect": tc["after_untrusted"], "ref": outside[0].id,
                     "message": f"Earlier in this conversation the agent read content from outside "
                                f"({', '.join(names[:3])}{'...' if len(names) > 3 else ''}), and this sends something out. "
                                "Check it's what you asked for."})
+    if held_setup_change and outside and tc["after_untrusted_setup_edit"] != "off":   # #74: only adds information
+        names = list(dict.fromkeys(r.name for r in outside))
+        target = _edited_target(ev, line)
+        out.append({"check": "after_untrusted_setup_edit", "effect": tc["after_untrusted_setup_edit"], "ref": outside[0].id,
+                    "message": f"Earlier in this conversation the agent read content from outside "
+                               f"({', '.join(names[:3])}{'...' if len(names) > 3 else ''}, {_ago(outside[0].created_at)}), "
+                               f"and this changes the agent's own setup{f' ({target})' if target else ''}. "
+                               "Content from outside can carry hidden instructions (prompt injection); "
+                               "check this change is what you asked for."})
     return out
 
 
@@ -1972,7 +1999,10 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
                 signals += history_signals(conn, ev.name, redact(ev.input), to_stored_json(ev.input), ev.source,
                                            ev.session_id, is_change=decision == "review" and not only_reads,
                                            client=client, only_reads=only_reads)
-                signals += data_signals(ev) + taint_signals(conn, ev, client) + command_found + run_rule_signals(ev, client)                     + written_then_run(conn, ev, client)
+                # #74: a change to the agent's own setup already held by the setup rule gets an extra signal
+                # naming the outside content read before it; it only adds information, never a decision.
+                held_setup_change = decision == "review" and rule_id == "approve-agent-setup-changes"
+                signals += data_signals(ev) + taint_signals(conn, ev, client, held_setup_change=held_setup_change)                     + command_found + run_rule_signals(ev, client) + written_then_run(conn, ev, client)
             blocking = next((s for s in signals if s["effect"] == "block"), None)
             needs_person = next((s for s in signals if s["effect"] == "review"), None)
             signal_id = lambda s: f"sequence:{s['rule']}" if s["check"] == "sequence" else \

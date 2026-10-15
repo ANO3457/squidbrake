@@ -42,8 +42,10 @@ the server that message asked for. Squidbrake holds the edit because it changes 
 that holds any edit to `~/.cursor/mcp.json`. It doesn't connect the edit to the Slack message: the outside content
 check (`after_untrusted`) only looks at actions that send something out, and a file write isn't one. So the approver
 sees "the agent wants to change its MCP servers", not "the agent wants to add a server that a Slack message from
-outside asked for". A check for an agent editing its own tool configuration after reading outside content would
-close that gap (follow up to [#37](https://github.com/batrapulkit/squidbrake/issues/37)).
+outside asked for". The `after_untrusted_setup_edit` check (issues [#74](https://github.com/batrapulkit/squidbrake/issues/74),
+follow up to [#37](https://github.com/batrapulkit/squidbrake/issues/37)) closes that gap: when a setup change held by
+the setup rule follows a read of outside content in the same conversation, the held request carries a warning
+naming which content came first.
 
 ## Edge cases
 

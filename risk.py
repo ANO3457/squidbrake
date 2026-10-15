@@ -16,7 +16,8 @@ import commands
 
 KIND = {"catastrophic": 80, "irreversible": 45, "hidden": 35}
 # chain signals from the gateway (server.py): what came before this step
-SIGNAL = {"untrusted_destination": 40, "after_untrusted": 25, "sequence": 30, "repeat_of_rejected": 25,
+SIGNAL = {"untrusted_destination": 40, "after_untrusted": 25, "after_untrusted_setup_edit": 30, "sequence": 30,
+          "repeat_of_rejected": 25,
           "impersonation": 45, "payment_request_in_message": 35, "duplicate_change": 15,
           "customer_names": 35, "personal_data": 35}
 MONEY = re.compile(r"(pay|transfer|refund|checkout|charge|invoice|purchase|payout|wire)", re.I)
