@@ -126,15 +126,16 @@ First run not right? [docs/troubleshooting.md](docs/troubleshooting.md).
 
 | Control | What it does | Details |
 |---|---|---|
-| **Sign-off by a second person** | Risky changes wait in the dashboard, on a phone (one tap, optional Face ID / fingerprint), or in Slack, Teams or email. A key can't approve its own request, and per rule (`second_person: true`) or for the team, nobody approves what their own agent asked for. Roles: only `finance` approves wires | [rules](docs/rules.md#human-approval) |
+| **Sign-off by a second person** | Risky changes wait in the dashboard, on a phone (one tap, optional Face ID / fingerprint), or in Slack, Teams or email. A key can't approve its own request, and per rule (`second_person: true`) or for the team, nobody approves what their own agent asked for. Roles: only `finance` approves wires. Two people for the big ones (`required_approvals: 2`, one rejection stops it), and escalation when nobody decides in time | [rules](docs/rules.md#human-approval) |
+| **Steer a running agent** | Send a note an agent gets with its next action. The agent can ask a person instead of guessing (`ask_user`), and must say why before a call a rule names (`justification: required`). `action: notify` lets it run and tells the team | [rules](docs/rules.md#tell-ask-why-ask-a-person-steer) |
 | **Command checks** | Catastrophic commands are blocked. Irreversible ones (`git push --force`, `terraform destroy`, `kubectl delete`, cloud deletes, `DROP TABLE`) and code that can't be read (`python -c`, `curl \| sh`, a script the agent just wrote) wait for a person. Commands that only look run | [rules](docs/rules.md#command-checks) |
 | **Chains** | An action is judged by what came before it: backups off and then a delete, a retry after a no, a refund loop. This works across conversations and agents, until the earlier step expires (`squidbrake capabilities`) | [rules](docs/rules.md#sequence-rules) |
 | **Prompt injection, without a model** | Sending to an address that only outside content mentioned (a web page, an email, an issue), even in an earlier conversation, waits for a person. The approver is told where the address came from | [rules](docs/rules.md#prompt-injection-caught-without-a-model) |
 | **Data in public places** | A customer's name or personal data in a PR, issue, comment or chat post waits for a person | [rules](docs/rules.md#customer-names-and-personal-data-in-public-places) |
 | **Undo** | Before an approved delete, `git reset --hard` or `git clean`, a copy is kept. `squidbrake undo` puts it back | [rules](docs/rules.md#undo-copies-spend-limits-proof-of-work-and-signed-approvals) |
 | **Self-protection** | An agent can't approve its own action, read Squidbrake's keys, or switch Squidbrake off without a person. Every minute it checks that its hooks, rules and installed files are unchanged | [threat model](THREAT_MODEL.md) |
-| **Evidence** | A hash-chained record with signed checkpoints that anyone can verify offline (`python verify.py`, `squidbrake audit verify`). A Monday summary, and an evidence pack for auditors (`squidbrake evidence`) | [operations](docs/operations.md#evidence-anyone-can-check) |
-| **Spend limits and kill switch** | Pause an agent after N tokens or dollars a day. Stop one agent, one conversation, or all of them, from the dashboard or a phone | [rules](docs/rules.md#undo-copies-spend-limits-proof-of-work-and-signed-approvals) |
+| **Evidence** | A hash-chained record with signed checkpoints that anyone can verify offline (`python verify.py`, `squidbrake audit verify`). A Monday summary, and an evidence pack for auditors (`squidbrake evidence`). Every rules version that decided something is kept, with a diff and *Put back* | [operations](docs/operations.md#evidence-anyone-can-check) |
+| **Spend limits and kill switch** | Pause an agent after N tokens or dollars a day. Stop one agent, one conversation, or all of them, from the dashboard or a phone. While stopped, its waiting approvals don't time out | [rules](docs/rules.md#undo-copies-spend-limits-proof-of-work-and-signed-approvals) |
 
 An example from the shipped `rules.yaml`:
 
@@ -200,11 +201,15 @@ Details: [docs/install.md](docs/install.md#2-connect-real-agents) and [docs/inte
   - Connect each laptop with `squidbrake connect all --url https://gateway.yourcompany.com --key gw_...`. Each agent
     key works for one person.
   - For several replicas, use Postgres (`DATABASE_URL`).
+  - *Settings → Agents across the team* lists the agents on each computer that don't go through Squidbrake yet
+    (`squidbrake doctor` reports names only; `SQUIDBRAKE_NO_INVENTORY=1` turns it off).
 - **Company-wide:** `squidbrake lockdown --url https://gateway.yourcompany.com` writes the managed-settings files IT
   pushes to every machine. Each agent must then run Squidbrake's hook, and `--dangerously-skip-permissions` / `--yolo`
   are turned off.
 - **Integrations:** Slack (approve and reject in the channel), Microsoft Teams, email, phone push (ntfy), and SIEM
-  export (Splunk HEC, Datadog, any HTTP endpoint).
+  export (Splunk HEC, Datadog, an OpenTelemetry collector, any HTTP endpoint).
+- **Signed builds:** every PyPI file and Docker image carries Sigstore-signed build provenance
+  ([how to check](SECURITY.md#checking-a-release-is-ours)).
 
 ## Security model and limits
 
