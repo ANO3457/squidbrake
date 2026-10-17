@@ -10,13 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write   # lets PyPI verify this workflow instead of a password or token
+      id-token: write       # lets PyPI verify this workflow instead of a password or token, and signs the provenance
+      attestations: write   # Sigstore-signed build provenance: gh attestation verify <file> --repo batrapulkit/squidbrake
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install build && python -m build
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   # every release page says how to install exactly that version (and where the others are)

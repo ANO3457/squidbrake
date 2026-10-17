@@ -159,6 +159,48 @@ PACKS: dict[str, dict] = {
     match:
       name: ["*scale*", "*restart*", "*stop*", "*drain*", "*failover*"]
 """},
+    "back-office": {"title": "Back-office agent", "about": "CRM, orders, marketing and data-warehouse tools. Records are "
+                    "never deleted; order and bulk changes wait for a person and say why; exports and campaigns run, "
+                    "and the team is told.", "yaml": """\
+  - id: back-office-never-delete-records
+    action: deny
+    reason: Deleting contacts, accounts, deals or orders is never an agent's call
+    match:
+      name: ["*delete_contact*", "*delete_account*", "*delete_deal*", "*delete_company*", "*delete_order*", "*purge*"]
+
+  - id: back-office-order-changes
+    action: review
+    justification: required
+    reason: Changes, cancels or re-prices a customer's order
+    match:
+      name: ["*cancel_order*", "*update_order*", "*order*price*", "*reship*", "*return*", "*chargeback*"]
+
+  - id: back-office-bulk-changes
+    action: review
+    justification: required
+    reason: Changes many records at once
+    match:
+      name: ["*bulk*", "*batch*", "*mass_update*", "*merge_contacts*", "*import*"]
+
+  - id: back-office-campaigns
+    action: review
+    reason: Sends to customers (an email, SMS or push campaign)
+    match:
+      name: ["*send_campaign*", "*schedule_campaign*", "*send_sms*", "*broadcast*", "*send_newsletter*"]
+
+  - id: back-office-exports
+    action: notify
+    reason: Customer data leaves the system (an export or a report download)
+    match:
+      name: ["*export*", "*download*", "*extract*", "*unload*"]
+
+  - id: back-office-warehouse-writes
+    action: review
+    reason: Writes to the data warehouse (tables other teams read)
+    match:
+      name: ["*warehouse*", "*bigquery*", "*snowflake*", "*redshift*", "*dbt*"]
+      input_regex: '\\b(insert|update|delete|merge|create|drop|alter|truncate)\\b'
+"""},
 }
 
 

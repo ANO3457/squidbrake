@@ -251,7 +251,8 @@ def _risky(pol: dict, action: str | None, which: str, name: str, input: Any) -> 
     """when_unreachable: block_risky: what the rules let run without a person still runs (unrecorded); anything that
     would wait for a person, be blocked, or is a command that can't be undone (or can't be read) is blocked."""
     if action != "allow":
-        return False, f"{which} would {'block it' if action == 'deny' else 'ask a person'}, and Squidbrake is unreachable"
+        did = {"deny": "block it", "notify": "tell a person"}.get(action, "ask a person")
+        return False, f"{which} would {did}, and Squidbrake is unreachable"
     if any(fnmatch.fnmatchcase(name.lower(), t.lower()) for t in pol.get("shell_tools") or []):
         try:
             import commands

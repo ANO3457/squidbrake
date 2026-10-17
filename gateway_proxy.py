@@ -53,7 +53,23 @@ def gateway_tools() -> list[types.Tool]:
         ),
         types.Tool(name=gw.DECISIONS_TOOL, description=gw.DECISIONS_HELP,
                    input_schema={"type": "object", "properties": {}}),
+        types.Tool(name=gw.ASK_TOOL, description=gw.ASK_HELP, input_schema=gw.ASK_SCHEMA),
     ]
+
+
+_justified: set[str] = set()     # the app's tools given the extra argument (an app's own `justification` stays its)
+
+
+def with_justification(tool: types.Tool) -> types.Tool:
+    """The app's tool, plus an optional `justification` argument (rules.yaml `justification:`). It goes to Squidbrake
+    only: call_tool takes it out before the app sees the call."""
+    schema = dict(tool.input_schema or {})
+    props = schema.get("properties")
+    if schema.get("type", "object") != "object" or not isinstance(props, dict) or "justification" in props:
+        return tool
+    _justified.add(tool.name)
+    return tool.model_copy(update={"input_schema": {**schema, "properties": {**props,
+                                                                             "justification": gw.JUSTIFICATION_PARAM}}})
 
 
 def replay(call: dict):
@@ -92,7 +108,7 @@ async def report(event_id: str, outcome) -> types.CallToolResult:
 
 async def list_tools(ctx, params) -> types.ListToolsResult:
     result = await _upstream.list_tools(cursor=params.cursor if params else None)
-    tools = list(result.tools)
+    tools = [with_justification(t) for t in result.tools]
     if not (params and params.cursor):
         tools += gateway_tools()
     return types.ListToolsResult(tools=tools, next_cursor=result.next_cursor)
@@ -150,10 +166,14 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
         return text_result(await gw.recent_decisions())
     if params.name == gw.CHECK_TOOL:
         return await gw.check_approval(str(args.get("event_id", "")), on_done=report, on_text=on_text)
+    if params.name == gw.ASK_TOOL:
+        return text_result(await gw.ask_user(args.get("question"), args.get("event_id")))
 
+    args = dict(args)
+    why = args.pop("justification", None) if params.name in _justified else None   # for Squidbrake and the approver; the app never sees it
     call = {"tool": params.name, "args": args}
     return await gw.guard(f"{APP}.{params.name}", args, replay(call), on_done=report, on_text=on_text, kind="mcp",
-                          call=call)
+                          call=call, metadata={"justification": str(why)[:2000]} if why else None)
 
 
 def upstream_target(args):
@@ -184,6 +204,8 @@ async def lifespan(server, target):
     async with Client(target) as upstream:
         _upstream = upstream
         tools = (await upstream.list_tools()).tools
+        for t in tools:              # known before the first call too (an agent may reuse a list it got earlier)
+            with_justification(t)
         log(f"guarding '{APP}' ({len(tools)} tools) -> gateway {gw.GATEWAY_URL} as '{gw.SOURCE}' (session {gw.SESSION})")
         yield {}
 

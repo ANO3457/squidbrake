@@ -633,6 +633,29 @@ def local_agents() -> list[dict]:
              "checks": covered[a["name"]][0], "not_checked": covered[a["name"]][1]} for a in found]
 
 
+def report_inventory() -> list[str] | None:
+    """Tell the team's gateway which agents this computer has and which go through Squidbrake, so the dashboard can
+    show the ones that don't yet. Only names and connected or not; nothing else leaves. Off with
+    SQUIDBRAKE_NO_INVENTORY=1. -> the agents not connected, or None if it couldn't be sent."""
+    if os.getenv("SQUIDBRAKE_NO_INVENTORY", "").lower() in ("1", "true", "yes"):
+        return None
+    hooked = _hooked_gateway()
+    if not hooked:
+        return None
+    import socket
+    url, key = hooked
+    try:
+        import httpx
+        host = httpx.URL(url).host
+        r = httpx.post(f"{url.rstrip('/')}/v1/agents/inventory", headers={"X-Gateway-Key": key}, timeout=5,
+                       trust_env=host not in ("localhost", "127.0.0.1", "::1"),
+                       json={"machine": socket.gethostname()[:100] or "unknown", "agents": local_agents()})
+        r.raise_for_status()
+        return r.json().get("not_connected") or []
+    except Exception:
+        return None
+
+
 def set_agent(name: str, on: bool, url: str) -> None:
     """Connect (or take out) one agent, the way `connect all --agent NAME` does, with the key the other hooks use."""
     if name not in AGENT_LABELS:
@@ -957,6 +980,10 @@ def doctor(args) -> int:
                 say("OK", "Hooks, rules and installed files are as they were (integrity)")
         except Exception as e:
             say("!", f"Couldn't check Squidbrake's own files ({e})")
+    missing = report_inventory()          # the team's dashboard lists agents that don't go through Squidbrake yet
+    if missing:
+        say("!", f"Not connected on this computer: {', '.join(missing)}. Their actions aren't checked or recorded",
+            "squidbrake connect all")
     for name, text, fix, errors in unused:
         if used:   # another agent already works through it: one you don't open isn't a problem
             print(f"  [-] {name}: connected, not used yet (fine if you don't use {name})")

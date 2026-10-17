@@ -708,6 +708,13 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
 
   <!-- ============================================================ SETTINGS -->
   <div id="view-settings" class="view" hidden>
+    <section class="card" id="teamAgents" hidden>
+      <div class="card-head"><h2>Agents across the team</h2><span class="sub" id="teamAgentsSub"></span></div>
+      <p class="lede">Each computer's <code>squidbrake doctor</code> says which agents it has. Anything marked
+        <b>not connected</b> works without Squidbrake: nothing it does is checked or recorded.</p>
+      <div class="tbl-wrap"><table class="events"><thead><tr><th>Computer</th><th>Connected</th><th>Not connected</th>
+        <th>Reported</th></tr></thead><tbody id="teamAgentsRows"></tbody></table></div>
+    </section>
     <section class="card" id="agentsHere" hidden>
       <div class="card-head"><h2>Agents on this computer</h2></div>
       <p class="lede">Choose which agents go through Squidbrake. Turning one off takes Squidbrake out of that agent only;
@@ -807,7 +814,8 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
         in the background, so a slow SIEM never slows an agent.</p>
       <form class="form-grid wide" id="siemForm">
         <label>Format <select name="siem_format"><option value="json">Any HTTP endpoint (JSON)</option>
-          <option value="splunk">Splunk (HTTP Event Collector)</option><option value="datadog">Datadog (logs)</option></select></label>
+          <option value="splunk">Splunk (HTTP Event Collector)</option><option value="datadog">Datadog (logs)</option>
+          <option value="otlp">OpenTelemetry collector (OTLP logs, its /v1/logs URL)</option></select></label>
         <label class="full">URL <input name="siem_url" placeholder="https://splunk.example.com:8088/services/collector/event"></label>
         <label class="full">Token <input name="siem_token" type="password" autocomplete="off"
           placeholder="HEC token, Datadog API key, or a Bearer token"></label>
@@ -908,6 +916,20 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     <div class="acts">
       <button class="btn" type="button" id="stopCancel">Cancel</button>
       <button class="btn danger" type="submit">⏹ Stop now</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="noteDlg">
+  <form method="dialog" id="noteForm">
+    <h3>Send a note</h3>
+    <p id="noteWhat">The agent gets it with its next action, and it's kept in the audit trail. It steers; it can't approve
+      anything.</p>
+    <input id="noteText" placeholder="e.g. use the staging database, not prod" maxlength="2000" aria-label="Note" required
+      style="width:100%;border:1px solid var(--border);background:var(--page);border-radius:8px;padding:8px 10px">
+    <div class="acts">
+      <button class="btn" type="button" id="noteCancel">Cancel</button>
+      <button class="btn primary" type="submit">✉ Send</button>
     </div>
   </form>
 </dialog>
@@ -1725,10 +1747,12 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
   function decisionControls(e, compact) {
     const why = cannotDecide(e);
     if (why) return el("span", { class: "hint", text: why });
-    const note = el("input", { placeholder: "Note (optional)", "aria-label": `Note for ${e.name}`, maxlength: "2000",
+    const isQ = e.kind === "question";   // ask_user: the note is the answer the agent gets
+    const note = el("input", { placeholder: isQ ? "Your answer (the agent gets this)" : "Note (optional)",
+      "aria-label": isQ ? `Answer to ${agentOf(e)}` : `Note for ${e.name}`, maxlength: "2000",
       onkeydown: (ev) => {
         if (ev.key === "Escape") { ev.stopPropagation(); note.blur(); }
-        else if (ev.key === "Enter" && !ev.isComposing && compact) { ev.preventDefault(); note.closest("div").querySelector(".btn.reject").click(); }
+        else if (ev.key === "Enter" && !ev.isComposing && compact) { ev.preventDefault(); note.closest("div").querySelector(isQ ? ".btn.approve" : ".btn.reject").click(); }
       } });
     const go = (outcome) => async (ev) => {
       if (outcome === "approve" && e.cannot_undo &&
@@ -1738,7 +1762,7 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
       try {
         const device_proof = await deviceProof(e.id, outcome);
         await apiPost(`/v1/events/${encodeURIComponent(e.id)}/${outcome}`, { note: note.value.trim() || null, device_proof });
-        toast(`${outcome === "approve" ? "Approved" : "Rejected"} ${e.name}`);
+        toast(isQ ? (outcome === "approve" ? "Answer sent" : "Declined") : `${outcome === "approve" ? "Approved" : "Rejected"} ${e.name}`);
         shortcutIndexHint = Math.max(0, queue.findIndex((q) => q.id === e.id));   // the next `j` lands on the request that moved up
         queue = queue.filter((q) => q.id !== e.id);
         shortcutQueueId = null; cancelApprove();   // never carry a selection over to the next request
@@ -1752,8 +1776,8 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
       }
     };
     return el("div", { class: compact ? "acts" : "appr-acts" }, note,
-      el("button", { class: "btn reject", onclick: go("reject") }, "✕ Reject"),
-      el("button", { class: "btn approve", onclick: go("approve") }, "✓ Approve"));
+      el("button", { class: "btn reject", onclick: go("reject") }, isQ ? "✕ Decline" : "✕ Reject"),
+      el("button", { class: "btn approve", onclick: go("approve") }, isQ ? "✓ Send answer" : "✓ Approve"));
   }
   function preview(v) {
     if (v == null) return "(no input)";
@@ -1868,7 +1892,10 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
             ),
           ),
           el("div", { class: "side" }, clockEl(e), decisionControls(e, true)),
-          el("div", { class: "inp", title: preview(e.input), text: preview(e.input) }),
+          e.kind === "question" && e.input && e.input.question
+            ? el("div", { class: "why", style: "font-size:14px", text: `❓ ${e.input.question}` })
+            : el("div", { class: "inp", title: preview(e.input), text: preview(e.input) }),
+          e.justification ? el("div", { class: "why" }, el("b", { text: "Why, says the agent: " }), e.justification) : null,
           briefEl(e),
           signalsEl(e.signals),
           storyDetails(e),
@@ -2056,7 +2083,8 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     if (stopped) return el("span", {}, compact ? "" : " ", el("span", { class: "tag", style: "border-color:var(--critical);color:var(--critical)", text: "stopped" }),
       me.is_admin ? el("button", { class: "linkish", text: "resume", onclick: () => resume(null, session) }) : null);
     return me.can_approve || me.is_admin
-      ? el("span", {}, compact ? "" : " ", el("button", { class: "linkish", style: "color:var(--critical)", text: compact ? "Stop" : "⏹ stop this session", onclick: () => askStop(null, session) }))
+      ? el("span", {}, compact ? "" : " ", el("button", { class: "linkish", style: "color:var(--critical)", text: compact ? "Stop" : "⏹ stop this session", onclick: () => askStop(null, session) }),
+          " ", el("button", { class: "linkish", text: compact ? "Note" : "✉ send a note", onclick: () => askNote(null, session) }))
       : null;
   }
 
@@ -2253,6 +2281,39 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     } catch (err) { toast(err.message); }
   }
 
+  let noteTarget = null, noteSession = null;
+  function askNote(agent, session = null) {
+    noteTarget = agent; noteSession = session;
+    $("#noteWhat").textContent = `${session ? "This conversation (" + session + ")" : "“" + agent + "”"} gets it with its next ` +
+      "action (Claude Code and the MCP connectors pass it on), and it's kept in the audit trail. It steers; it can't approve anything.";
+    $("#noteText").value = "";
+    $("#noteDlg").showModal();
+    $("#noteText").focus();
+  }
+  $("#noteCancel").addEventListener("click", () => $("#noteDlg").close());
+  $("#noteForm").addEventListener("submit", async () => {
+    const text = $("#noteText").value.trim();
+    if (!text) return;
+    try {
+      await apiPost("/v1/notes", noteSession ? { session: noteSession, text } : { agent: noteTarget, text });
+      toast("Note sent: the agent gets it with its next action");
+    } catch (err) { toast(err.message); }
+  });
+
+  async function loadTeamAgents() {
+    try {
+      const r = await api("/v1/agents/inventory");
+      $("#teamAgents").hidden = !r.machines.length;
+      $("#teamAgentsSub").textContent = r.not_connected.length
+        ? `${r.not_connected.length} agent${r.not_connected.length === 1 ? "" : "s"} not connected` : "every agent reported is connected";
+      cells("#teamAgentsRows", r.machines.map((m) => el("tr", {},
+        el("td", {}, el("b", { text: m.machine }), m.stale ? el("span", { class: "tag", style: "margin-left:6px", text: "old report" }) : null),
+        el("td", { class: "sec", text: m.agents.filter((a) => a.connected).map((a) => a.label).join(", ") || "none" }),
+        el("td", { style: "color:var(--critical)", text: m.agents.filter((a) => !a.connected).map((a) => a.label).join(", ") }),
+        el("td", { class: "sec", text: fmtAgo(m.at) }))), "No computer has reported yet.");
+    } catch { $("#teamAgents").hidden = true; }
+  }
+
   async function downloadEvidence() {
     try {
       const res = await fetch("/v1/audit/export.json", { headers: { "X-Gateway-Key": apiKey } });
@@ -2400,7 +2461,9 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
       ...["total", "denied", "held", "approved", "rejected", "failed"].map((k) => el("td", { class: "num", text: nf.format(g[k] || 0) })),
       el("td", { class: "sec", text: fmtAgo(g.last_seen) }),
       el("td", { class: "num" }, me.is_admin && stoppedAgents[g.agent] ? el("button", { class: "linkish", text: "Resume", onclick: () => resume(g.agent) })
-        : (me.can_approve || me.is_admin) && !stoppedAgents[g.agent] ? el("button", { class: "linkish", style: "color:var(--critical)", text: "Stop", onclick: () => askStop(g.agent) }) : null),
+        : (me.can_approve || me.is_admin) && !stoppedAgents[g.agent] ? el("span", {},
+            el("button", { class: "linkish", text: "Note", onclick: () => askNote(g.agent) }), " ",
+            el("button", { class: "linkish", style: "color:var(--critical)", text: "Stop", onclick: () => askStop(g.agent) })) : null),
     )), "No agent activity in this period.");
     api("/v1/budgets").then((b) => {
       $("#spendCard").hidden = !b.budgets.length;
@@ -2513,6 +2576,7 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
   }
   async function loadSettings() {
     loadAgentsHere();
+    loadTeamAgents();
     const [s, team] = await Promise.all([api("/v1/settings"), api("/v1/team")]);
     for (const k of ["public_url", "ntfy_topic", "slack_webhook", "slack_signing_secret", "teams_webhook", "email_to",
                      "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from"]) sForm[k].value = s[k] || "";

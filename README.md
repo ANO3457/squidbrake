@@ -9,6 +9,7 @@
 [![tests](https://github.com/batrapulkit/squidbrake/actions/workflows/tests.yml/badge.svg)](https://github.com/batrapulkit/squidbrake/actions/workflows/tests.yml)
 [![PyPI](https://img.shields.io/pypi/v/squidbrake.svg)](https://pypi.org/project/squidbrake/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/batrapulkit/squidbrake/badge)](https://scorecard.dev/viewer/?uri=github.com/batrapulkit/squidbrake)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](requirements.txt)
 [![MCP](https://img.shields.io/badge/MCP-compatible-8A2BE2.svg)](docs/install.md#2-connect-real-agents)
 [![Real incidents replayed: 13 of 14 stopped](https://img.shields.io/badge/real%20incidents%20replayed-13%20of%2014%20stopped-yellow.svg)](incidents/)

@@ -1,6 +1,6 @@
 """
-Every decision, as it happens, to a SIEM: Splunk (HTTP Event Collector), Datadog (logs intake), or any HTTP endpoint
-that takes JSON. Set it in the dashboard (Settings → Send to your SIEM) or with SIEM_URL / SIEM_TOKEN / SIEM_FORMAT.
+Every decision, as it happens, to a SIEM: Splunk (HTTP Event Collector), Datadog (logs intake), an OpenTelemetry
+collector (OTLP logs over HTTP/JSON, its /v1/logs URL), or any HTTP endpoint that takes JSON. Set it in the dashboard (Settings → Send to your SIEM) or with SIEM_URL / SIEM_TOKEN / SIEM_FORMAT.
 
 Sent in the background, in batches, so a slow or down SIEM never slows an agent. What's sent is what the dashboard
 shows: who, which tool, the decision and why, and the call's input as stored (secrets already redacted), cut to 500
@@ -35,7 +35,32 @@ def body_and_headers(fmt: str, token: str, items: list[dict]) -> tuple[bytes, di
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if fmt == "otlp":                   # OpenTelemetry logs over HTTP/JSON: a collector's /v1/logs (Grafana, Honeycomb...)
+        return json.dumps(otlp_logs(items)).encode(), headers
     return json.dumps([{k: v for k, v in i.items() if k != "epoch"} for i in items]).encode(), headers
+
+
+def _otlp_value(v) -> dict:
+    if isinstance(v, bool):
+        return {"boolValue": v}
+    if isinstance(v, int):
+        return {"intValue": str(v)}     # OTLP/JSON writes 64-bit integers as strings
+    if isinstance(v, float):
+        return {"doubleValue": v}
+    return {"stringValue": v if isinstance(v, str) else json.dumps(v, default=str)}
+
+
+def otlp_logs(items: list[dict]) -> dict:
+    """One log record per decision; a block is a WARN, everything else INFO. Attributes are squidbrake.<field>."""
+    records = [{"timeUnixNano": str(int(i["epoch"] * 1e9)),
+                "severityText": "WARN" if i.get("decision") == "deny" else "INFO",
+                "severityNumber": 13 if i.get("decision") == "deny" else 9,
+                "body": {"stringValue": f"{i.get('agent')} {i.get('tool')}: {i.get('decision')} "
+                                        f"({i.get('rule_id') or 'default'})"},
+                "attributes": [{"key": f"squidbrake.{k}", "value": _otlp_value(v)}
+                               for k, v in i.items() if k != "epoch" and v is not None]} for i in items]
+    return {"resourceLogs": [{"resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "squidbrake"}}]},
+                              "scopeLogs": [{"scope": {"name": "squidbrake"}, "logRecords": records}]}]}
 
 
 class Forwarder:

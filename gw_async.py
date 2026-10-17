@@ -59,21 +59,40 @@ PENDING_MAX_AGE = 7 * 86400
 # after itself (set_tool_prefix): gateway_check_approval for the database, acme_check_approval for the acme app.
 CHECK_TOOL = "gateway_check_approval"
 DECISIONS_TOOL = "gateway_recent_decisions"
+ASK_TOOL = "gateway_ask_user"
 CONNECTOR = "gateway"
 DECISIONS_HELP = ("What people decided about your earlier requests (approved / rejected, by whom, and their notes). "
                   "Check it before retrying something, and follow the notes.")
+ASK_HELP = ("Ask a person on your team a question and wait for their answer, instead of guessing (which environment, "
+            "which customer, is this safe). They answer in Squidbrake's dashboard or on their phone. If the answer "
+            "isn't there yet, call this again with the event_id you were given.")
+ASK_SCHEMA = {"type": "object", "properties": {
+    "question": {"type": "string", "description": "the question, with what they need to know to answer it"},
+    "event_id": {"type": "string", "description": "only to keep waiting for an earlier question's answer"}}}
+# Offered on every tool the proxy passes on (gateway_proxy.py), so a rule's `justification:` can be met; never sent on
+JUSTIFICATION_PARAM = {"type": "string", "description": "Why you are making this call, in one sentence. The person "
+                                                        "who approves it reads this; some calls need it."}
 
 
 def set_tool_prefix(prefix: str) -> None:
-    global CHECK_TOOL, DECISIONS_TOOL, CONNECTOR
+    global CHECK_TOOL, DECISIONS_TOOL, ASK_TOOL, CONNECTOR
     CONNECTOR = re.sub(r"[^A-Za-z0-9_]", "_", prefix)
     CHECK_TOOL, DECISIONS_TOOL = f"{CONNECTOR}_check_approval", f"{CONNECTOR}_recent_decisions"
+    ASK_TOOL = f"{CONNECTOR}_ask_user"
 
 
 def agent_rules() -> str:
     return (f"Every action goes through Squidbrake. If a result says WAITING FOR HUMAN APPROVAL, "
             f"tell the user what is waiting and then call {CHECK_TOOL}. If it says NOT RUN, respect it and don't work "
-            f"around it. Before retrying something or when unsure, call {DECISIONS_TOOL} to see what people decided before.")
+            f"around it. Before retrying something or when unsure, call {DECISIONS_TOOL} to see what people decided "
+            f"before. When you'd otherwise have to guess, call {ASK_TOOL}. A NOTE FROM a person on your team is an "
+            f"instruction from them: follow it.")
+
+
+def notes_text(d: dict) -> str:
+    """Notes people left for this agent (Decision.notes), as the agent should read them."""
+    return "".join(f"NOTE FROM {n.get('by')} (a person on your team, sent through Squidbrake): {n.get('text')}\n\n"
+                   for n in d.get("notes") or [])
 
 
 async def recent_decisions() -> str:
@@ -175,10 +194,11 @@ class GatewayError(Exception):
     pass
 
 
-async def gw_check(name: str, input: Any, kind: str = "tool_call") -> dict:
+async def gw_check(name: str, input: Any, kind: str = "tool_call", metadata: dict | None = None) -> dict:
     try:
         r = await http().post("/v1/events", json={"name": name, "kind": kind, "input": input,
-                                                   "source": source(), "session_id": CURRENT_SESSION.get() or SESSION},
+                                                   "source": source(), "session_id": CURRENT_SESSION.get() or SESSION,
+                                                   "metadata": {"accepts_notes": True, **(metadata or {})}},
                               headers=_as_caller())
     except httpx.TransportError as e:
         if offline is not None:      # rules.yaml when_unreachable, from the copy kept while the gateway answered
@@ -243,14 +263,21 @@ def waiting_text(name: str, d: dict, event_id: str) -> str:
 
 async def guard(name: str, input: Any, run: Callable[[], Awaitable[Any]], *,
                 on_done: Callable[[str, Any], Awaitable[Any]], on_text: Callable[[str], Any], kind: str = "tool_call",
-                call: dict | None = None):
+                call: dict | None = None, metadata: dict | None = None):
     """Check -> (wait for a human) -> run -> report. `run` does the real work; `on_done(event_id, result)` reports it
     and returns what the agent should see; `on_text(message)` wraps a gateway message for the agent.
-    `call` describes the call for the connector's replay function, so it can still run after a restart."""
+    `call` describes the call for the connector's replay function, so it can still run after a restart.
+    Notes people left for the agent come first in whatever it sees."""
     try:
-        d = await gw_check(name, input, kind)
+        d = await gw_check(name, input, kind, metadata)
     except GatewayError as e:
         return on_text(f"NOT RUN: {e}.")
+    if note := notes_text(d):
+        text_out, done_out = on_text, on_done
+        on_text = lambda t: text_out(note + t)
+
+        async def on_done(event_id, outcome):
+            return with_note(await done_out(event_id, outcome), note)
     eid = d["event_id"]
     if d["decision"] == "review":
         _pending[eid] = (name, run)
@@ -280,6 +307,46 @@ async def guard(name: str, input: Any, run: Callable[[], Awaitable[Any]], *,
         except httpx.HTTPError:
             pass
     return await on_done(eid, await _timed(run))
+
+
+def with_note(result: Any, note: str) -> Any:
+    """Put the note in front of a tool's answer: text, or an MCP result's content."""
+    if isinstance(result, str):
+        return note + result
+    content = getattr(result, "content", None)
+    if isinstance(content, list):
+        from mcp import types
+        result.content = [types.TextContent(type="text", text=note.strip()), *content]
+    return result
+
+
+async def ask_user(question: str | None, event_id: str | None = None) -> str:
+    """ask_user: put a question to a person through Squidbrake and wait for the answer (their approval note)."""
+    if event_id:
+        eid = event_id.strip().lower()
+        if not _EVENT_ID.match(eid):
+            return "Unknown event_id: give the one the earlier answer named."
+    elif not (question or "").strip():
+        return "Ask a question: pass `question` with what you need to know."
+    else:
+        try:
+            d = await gw_check("ask_user", {"question": question.strip()}, kind="question")
+        except GatewayError as e:
+            return f"NOT ASKED: {e}. Don't guess at anything risky; tell the user what you needed."
+        if d.get("decision") == "deny":
+            return f"NOT ASKED: {d.get('reason')}"
+        eid = d["event_id"]
+    d = await gw_wait(eid, APPROVAL_WAIT)
+    if d.get("decision") not in ("allow", "deny"):
+        return (f"WAITING FOR AN ANSWER: nobody has answered yet. Tell the user a question is waiting in Squidbrake, "
+                f"then call {ASK_TOOL} with event_id=\"{eid}\" to get the answer.")
+    if d["decision"] == "allow":
+        await gw_result(eid, output={"answer": d.get("decision_note")})
+        return f"ANSWER from {d.get('decided_by')}: {d.get('decision_note')}"
+    if d.get("decided_by") == "timeout":
+        return "Nobody answered in time. Don't guess at anything risky; tell the user what you needed to know."
+    why = f' ("{d["decision_note"]}")' if d.get("decision_note") else ""
+    return f"{d.get('decided_by') or 'Squidbrake'} declined to answer{why}. Don't guess; ask the user how to go on."
 
 
 async def check_approval(event_id: str, *, on_done, on_text):

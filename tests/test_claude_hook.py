@@ -100,3 +100,15 @@ def test_claude_hook_reads_a_byte_order_mark_and_blocks_unreadable_input(monkeyp
     out = go(b"\xef\xbb\xbf{broken")
     assert '"deny"' in out and "couldn't read" in out
     assert go(b"") == ""                                                   # nothing to check
+
+
+def test_a_note_reaches_claude_with_the_next_call(hook):
+    """A person's note to the agent comes back with its next allowed call, as context Claude reads."""
+    run, c = hook
+    c.post("/v1/notes", headers={"X-Gateway-Key": "k2"}, json={"session": "hook-test", "text": "the bug is in parser.py"})
+    out = json.loads(run({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"},
+                          "tool_use_id": "t-note"}))
+    assert "NOTE FROM boss" in out["hookSpecificOutput"]["additionalContext"]
+    assert "the bug is in parser.py" in out["systemMessage"] and "permissionDecision" not in out["hookSpecificOutput"]
+    assert run({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"},
+                "tool_use_id": "t-note2"}) == ""       # delivered once

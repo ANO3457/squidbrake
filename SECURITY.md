@@ -24,3 +24,13 @@ Especially interesting:
 - The gateway **fails closed**: if it's unreachable, the Claude Code hook and the MCP connectors refuse to run tools.
 - It guards the actions that go through it. An agent with its own unguarded shell or credentials can still act
   outside it, so connect every tool path the agent has (for Claude Code, `connect.py claude-code` covers all of them).
+
+## Checking a release is ours
+
+Every release on PyPI and every image on ghcr.io comes with Sigstore-signed build provenance from GitHub Actions: which
+workflow built it, from which commit. To check a downloaded file or the image:
+
+```bash
+gh attestation verify squidbrake-VERSION-py3-none-any.whl --repo batrapulkit/squidbrake
+gh attestation verify oci://ghcr.io/batrapulkit/squidbrake:latest --repo batrapulkit/squidbrake
+```

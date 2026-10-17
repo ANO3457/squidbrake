@@ -161,16 +161,55 @@ Rules with `action: review` hold the call until a person approves or rejects it:
 - **Stop asking about what you always approve:** *Settings → Rules* suggests an `allow` rule for anything people
   approved 5+ times in 30 days and never rejected (never for money, an agent's own setup, or what the command,
   data or chain checks held). *Allow it* adds the rule right before the one that held it, with a backup.
-- **Starter packs** for a support, finance or ops agent add a block of rules after the read rule, so blocks above
+- **Starter packs** for a support, finance, ops or back-office (CRM, orders, campaigns, warehouse) agent add a block of rules after the read rule, so blocks above
   still win.
 - **To your SIEM:** *Settings → Send to your SIEM* streams every decision to Splunk (HEC), Datadog (logs) or any HTTP
-  endpoint, in batches in the background. Or set `SIEM_URL`, `SIEM_TOKEN`, `SIEM_FORMAT`.
+  endpoint, in batches in the background; or an OpenTelemetry collector (format `otlp`, its `/v1/logs` URL),
+  as OTLP log records. Or set `SIEM_URL`, `SIEM_TOKEN`, `SIEM_FORMAT`.
 - **Approve and Reject right in Slack:** in Settings, open *Approve and Reject right in Slack*, create the Slack app
   from the manifest shown there, install it to your approvals channel, and paste its webhook URL and signing secret.
   Each click is checked against the signing secret and carries that one event's signed token; the message then says
   who decided.
 - Through the HTTP proxy, a held request stays open until it's decided, so the caller's HTTP
   timeout must be longer than the rule's `timeout_seconds`.
+
+## Tell, ask why, ask a person, steer
+
+**`action: notify`** runs the action and tells the team (Slack, Teams, phone, email), at most once an hour per rule and
+agent. A gentle first step for pilots: nothing is held, and people still see what happens.
+
+```yaml
+- id: tell-on-exports
+  action: notify
+  reason: Customer data leaves the system
+  match: { name: "*export*" }
+```
+
+**`justification: required | optional`** on a rule: the agent must say why before the call runs (`required`), and
+the approver reads it as *Why, says the agent*. Without one the call is blocked with a message asking for it, so the
+agent calls again with a reason. Where the reason comes from: a `justification` argument (the MCP proxy offers it on
+every tool, and never passes it to the app), `metadata.justification` from your own client, or the `description` of
+Claude Code's Bash tool. Use `required` only on tools that can carry it (MCP tools, Bash, your own client): Claude
+Code's Write or Edit can't.
+
+**Questions from the agent (`ask_user`).** The MCP connectors give the agent an `<app>_ask_user` tool. A question
+waits in the approval queue (and on Slack, Teams, phone, email) with an answer box: *Send answer* gives the agent your
+words; *Decline* tells it not to guess. Any client can ask with `POST /v1/events` and `{"kind": "question",
+"input": {"question": "..."}}`; the answer is the decision's `decision_note`.
+
+**Notes to a running agent.** *Note* next to an agent in Reports, or *send a note* next to a conversation, or
+`POST /v1/notes {"agent": "..."}` / `{"session": "..."}`. The agent gets it with its next action: Claude Code as
+context for its next step, MCP tools at the top of the next result. A note steers; it can't approve or lift anything.
+It's kept in the audit trail, with who sent it and when it was delivered. A note can be taken back until it's delivered
+(`DELETE /v1/notes/{id}`).
+
+**Stops freeze approval deadlines.** While an agent is stopped, its waiting approvals don't time out and can't be
+approved (only rejected). When it's resumed they get back the time they spent frozen; a stop with a time limit gives
+its whole length up front.
+
+**Agents across the team.** Each computer's `squidbrake doctor` tells the gateway which agents it has and which go
+through Squidbrake (names only; off with `SQUIDBRAKE_NO_INVENTORY=1`). *Settings → Agents across the team* lists the
+ones that don't yet.
 
 ## Undo copies, spend limits, proof of work and signed approvals
 

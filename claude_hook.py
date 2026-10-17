@@ -160,9 +160,15 @@ def save_usage_state(new_state: dict | None) -> None:
             pass
 
 
-def keep_copy(ev: dict, line: str | None, d: dict, http: httpx.Client) -> None:
+def notes_text(d: dict) -> str:
+    """Notes people left for this agent (Decision.notes), as Claude should read them. Same words as gw_async.py."""
+    return "".join(f"NOTE FROM {n.get('by')} (a person on your team, sent through Squidbrake): {n.get('text')}\n\n"
+                   for n in d.get("notes") or [])
+
+
+def keep_copy(ev: dict, line: str | None, d: dict, http: httpx.Client) -> str | None:
     """Undo: back up what this call destroys or overwrites, before it runs. When the rules require a copy and none
-    could be made, the call doesn't run (and the gateway is told why)."""
+    could be made, the call doesn't run (and the gateway is told why). -> what to tell the user about the copy."""
     want, strict = d.get("snapshot"), bool(d.get("snapshot_strict"))
     kept = None
     if line and undo is not None:
@@ -188,7 +194,8 @@ def keep_copy(ev: dict, line: str | None, d: dict, http: httpx.Client) -> None:
         deny(f"Squidbrake keeps a copy before changes like this one and couldn't ({kept['skipped']}), so it didn't "
              "run. Tell the user; they can make a backup themselves or set snapshot: best_effort on the rule.")
     if kept and not kept.get("skipped"):
-        print(json.dumps({"systemMessage": undo.describe(kept)}))
+        return undo.describe(kept)
+    return None
 
 
 def shell_command(ev: dict) -> str | None:
@@ -203,7 +210,7 @@ def pre(ev: dict, http: httpx.Client) -> None:
         "name": ev.get("tool_name", "unknown"), "kind": "claude_code", "input": ev.get("tool_input"),
         "source": SOURCE, "session_id": ev.get("session_id"),
         "metadata": {"cwd": ev.get("cwd"), "permission_mode": ev.get("permission_mode"),
-                     "tool_use_id": ev.get("tool_use_id")},
+                     "tool_use_id": ev.get("tool_use_id"), "accepts_notes": True},
     }
     spent, usage_state = transcript_usage(ev)
     if spent:
@@ -250,25 +257,34 @@ def pre(ev: dict, http: httpx.Client) -> None:
             return
         deny(unreachable(GATEWAY_URL, e, "tool call"))
 
+    told = notes_text(d)        # a person's note rides on this answer, allowed or not
     if d["decision"] == "review":
         deny("Squidbrake: nobody approved this in time. Ask the user to approve it in the dashboard, then try again.")
     if d["decision"] == "deny":
         by = d.get("decided_by")
         if paused(d):
-            deny(f"Squidbrake: {d.get('decision_note') or d.get('reason')}. Stop working and tell the user.", stop=True)
+            deny(f"{told}Squidbrake: {d.get('decision_note') or d.get('reason')}. Stop working and tell the user.", stop=True)
         if by == "timeout":
             deny("Squidbrake: nobody approved this in time, so it didn't run. Ask the user to approve it in the "
                  f"dashboard ({GATEWAY_URL}/dashboard) when you try again.")
         if by:
             note = f' Note: "{d["decision_note"]}".' if d.get("decision_note") else ""
             deny(f"Squidbrake: rejected by {by}.{note} Don't retry it; ask the user how to proceed.")
-        deny(f"Squidbrake blocked this (rule '{d.get('rule_id')}'): {(d.get('reason') or '').rstrip('.')}. Don't try to work around it.")
+        deny(f"{told}Squidbrake blocked this (rule '{d.get('rule_id')}'): {(d.get('reason') or '').rstrip('.')}. "
+             "Don't try to work around it.")
 
     # Allowed: remember the event so PostToolUse can attach the result, then let Claude Code continue normally.
     if ev.get("tool_use_id"):
         STATE_DIR.mkdir(exist_ok=True)
         (STATE_DIR / f"{ev['tool_use_id']}.json").write_text(json.dumps({"event_id": d["event_id"], "t0": time.time()}))
-    keep_copy(ev, line, d, http)
+    copied = keep_copy(ev, line, d, http)
+    out: dict = {}
+    if told:   # Claude reads it before its next step; the person at the keyboard sees it too
+        out["hookSpecificOutput"] = {"hookEventName": "PreToolUse", "additionalContext": told.strip()}
+    if copied or told:
+        out["systemMessage"] = " ".join(x for x in (told.strip() if told else None, copied) if x)
+    if out:
+        print(json.dumps(out))
 
 
 def post(ev: dict, http: httpx.Client, failed: bool = False) -> None:

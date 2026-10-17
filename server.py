@@ -475,6 +475,21 @@ events = Table(
     Column("feedback_by", String(200)),
     Column("feedback_at", String(32)),
     Column("identity", String(200), index=True),    # who the agent acts for (identity_of): chains follow it            # how the person decided, e.g. "passkey: Pat's iPhone"
+    Column("justification", Text),                  # why the agent says it's doing this (rule `justification:`), redacted
+)
+
+# A person's note to a running agent ("use the staging database, not prod"): delivered with the agent's next action
+# that can carry it (Decision.notes), then marked delivered. A steer only: it never approves or lifts anything.
+notes = Table(
+    "notes", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("created_at", String(32), nullable=False),
+    Column("by", String(200), nullable=False),
+    Column("agent", String(200), index=True),       # an agent's source or key name, or
+    Column("session_id", String(200), index=True),  # one conversation
+    Column("text", Text, nullable=False),
+    Column("delivered_at", String(32), index=True),
+    Column("delivered_event", String(36)),
 )
 
 # Small key/value store for state all workers share: the emergency stop and notification settings.
@@ -1058,10 +1073,16 @@ class Policy:
                         # maker-checker: the person whose agent asked can't approve it, whatever Settings say
                         "second_person": bool(r.get("second_person")),
                         "mode": _rule_mode(r, r.get("id") or f"rule-{i}"),
+                        # the agent must (required) or may (optional) say why; the approver sees it
+                        "justification": str(r["justification"]).lower() if r.get("justification") else None,
                     })
                 default = data.get("default", "allow")
-                if default not in ("allow", "deny", "review") or any(r["action"] not in ("allow", "deny", "review") for r in rules):
-                    raise ValueError("actions must be 'allow', 'deny' or 'review'")
+                if default not in ("allow", "deny", "review") or \
+                        any(r["action"] not in ("allow", "deny", "review", "notify") for r in rules):
+                    raise ValueError("actions must be 'allow', 'deny', 'review' or 'notify' (the default: allow, deny "
+                                     "or review)")
+                if any(r["justification"] not in (None, "required", "optional") for r in rules):
+                    raise ValueError("justification must be required or optional")
                 if any(r["on_timeout"] not in ("allow", "deny") or r["timeout_seconds"] < 1 for r in rules):
                     raise ValueError("on_timeout must be 'allow' or 'deny' and timeout_seconds >= 1")
                 hc = {**HISTORY_DEFAULTS, **(data.get("history_checks") or {})}
@@ -1133,7 +1154,7 @@ class Policy:
                 log.exception("failed to load %s, keeping previous rules", self.path)
             self._sig = sig
 
-    DEFAULT_RULE = {"timeout_seconds": APPROVAL_TIMEOUT, "on_timeout": "deny", "approvers": None}
+    DEFAULT_RULE = {"timeout_seconds": APPROVAL_TIMEOUT, "on_timeout": "deny", "approvers": None, "justification": None}
 
     def shadow_for(self, source: str | None, client: str, rule_id: str | None = None) -> bool:
         """Shadow mode: record what would happen, but let it through (everything, or the agents listed). A rule or
@@ -1201,6 +1222,9 @@ class Decision(BaseModel):
     # make a copy (an MCP tool, a client without a snapshot function) must not run it either.
     snapshot: str | None = None
     snapshot_strict: bool = False
+    # Notes people left for this agent ({by, text, at}), handed over with this answer (callers that send
+    # metadata.accepts_notes: true pass them to the agent). A steer, never a permission.
+    notes: list[dict] | None = None
 
 
 class ChallengeIn(BaseModel):
@@ -1965,9 +1989,55 @@ def reported_effects(metadata: dict | None) -> str | None:
     return "; ".join(lines) or None
 
 
+def justification_of(ev: EventIn) -> str | None:
+    """Why the agent says it's doing this: `justification` in its metadata or in the call (the MCP proxy offers that
+    argument on every tool), or a shell tool's own `description` (Claude Code's Bash has one). Redacted, 1000 chars."""
+    inp = ev.input if isinstance(ev.input, dict) else {}
+    shell = inp.get("description") if ev.name in ("Bash", "PowerShell") else None
+    for v in ((ev.metadata or {}).get("justification"), inp.get("justification"), shell):
+        if isinstance(v, str) and v.strip():
+            return redact(v.strip())[:1000]
+    return None
+
+
+NOTIFY_EVERY = float(os.getenv("SQUIDBRAKE_NOTIFY_EVERY_SECONDS", "3600"))
+_notified: dict[tuple, float] = {}
+
+
+def notify_rule_hit(rule: dict, row: dict) -> None:
+    """A `notify` rule matched: the action ran, and the team hears about it, at most once an hour per rule and agent.
+    shortcut: the hourly limit is per gateway process; with several workers each may send one, fine until it isn't."""
+    who = row["source"] or row["client"]
+    now = time.monotonic()
+    if now - _notified.get((rule["id"], who), -NOTIFY_EVERY) < NOTIFY_EVERY:
+        return
+    _notified[(rule["id"], who)] = now
+    dash = f"{(settings().get('public_url') or PUBLIC_URL or 'http://localhost:8080').rstrip('/')}/dashboard"
+    text = (f"{who} ran {row['name']} ({rule['reason'] or rule['id']}). Nothing was held: rule '{rule['id']}' only "
+            f"tells you. {_preview(row['input'], 200)}\nSee it: {dash}")
+    threading.Thread(target=notify_text, args=(f"Squidbrake: {who} ran {row['name']}", text), daemon=True).start()
+
+
+def take_notes(conn, ev: EventIn, client: str, event_id: str) -> list[dict]:
+    """Notes people left for this agent or conversation, handed over with this action and marked delivered."""
+    conds = [notes.c.agent.in_([k for k in (ev.source, client) if k])]
+    if ev.session_id:
+        conds.append(notes.c.session_id == ev.session_id)
+    out = []
+    for n in conn.execute(select(notes).where(notes.c.delivered_at.is_(None), or_(*conds))
+                          .order_by(notes.c.created_at)).all():
+        if conn.execute(update(notes).where(notes.c.id == n.id, notes.c.delivered_at.is_(None))
+                        .values(delivered_at=utcnow(), delivered_event=event_id)).rowcount:
+            audit(conn, client, "note.delivered", n.id, event=event_id, by=n.by)
+            out.append({"by": n.by, "text": n.text, "at": n.created_at})
+    return out
+
+
 def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
     started = time.perf_counter()
     signals: list[dict] = []
+    why = None if ev.kind == "prompt" else justification_of(ev)
+    notify_rule = None
     if spent := usage_from_metadata(ev.metadata):      # the hook reports model tokens with each action
         spent.source, spent.session_id = ev.source, ev.session_id
         record_usage(client, spent)
@@ -1982,6 +2052,13 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
     elif guard and guard["effect"] == "block":
         decision, rule, rule_id, reason, signals = "deny", policy.DEFAULT_RULE, "self-protection:approval", \
             guard["message"], [guard]
+    elif ev.kind == "question" and not already_done:
+        # ask_user: the agent asks a person instead of guessing. Always waits for one; the answer is the note.
+        q = ev.input.get("question") if isinstance(ev.input, dict) else None
+        if not isinstance(q, str) or not q.strip():
+            raise HTTPException(422, "a question needs input {\"question\": \"...\"}")
+        decision, rule, rule_id = "review", policy.DEFAULT_RULE, "ask-user"
+        reason = f"{ev.source or client} asks: {redact(q.strip())[:300]}"
     elif not already_done and ev.kind != "prompt" and (over := budget_hit(ev.source, client)):
         decision, rule, rule_id, reason = "deny", policy.DEFAULT_RULE, f"budget:{over['budget']}", over["message"]
     else:
@@ -1989,6 +2066,13 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
         decision, reason, rule_id, rule = policy.evaluate(
             kind=ev.kind, name=ev.name, source=ev.source, client=client, session_id=ev.session_id, input=ev.input
         )
+        if decision == "notify":       # runs; the team is told (below), unless a check below holds it after all
+            decision, notify_rule = "allow", rule
+        if rule.get("justification") == "required" and not why and not already_done and decision != "deny":
+            reason = (f"Say why first: rule '{rule_id}' ({reason}) needs a reason before {ev.name} runs. Call it again "
+                      "with a `justification` argument: one sentence on why this, and why now. The person who approves "
+                      "it reads that.")
+            decision, rule_id = "deny", f"justification:{rule_id}"
         if decision != "deny":
             command_found, only_reads = command_signals(ev.name, ev.input, ev.metadata)
             with engine.connect() as conn:
@@ -2032,13 +2116,14 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
         risk_score, risk_why = None, []
     would = None
     # Shadow mode lets it through but records what would have happened. Stops and catastrophic commands still apply.
-    if decision in ("deny", "review") and rule_id not in ("emergency-stop", "session-stop", "command:catastrophic_command") \
+    if decision in ("deny", "review") and rule_id not in ("emergency-stop", "session-stop", "command:catastrophic_command",
+                                                          "ask-user") \
             and not str(rule_id).startswith(("budget:", "self-protection:")) and policy.shadow_for(ev.source, client, rule_id):
         would = decision
         reason = f"Shadow mode, allowed. Would have {'been blocked' if decision == 'deny' else 'waited for approval'}: {reason}"
         decision = "allow"
     broken = state_get("integrity", {}).get("changes") if policy.integrity == "fail_closed" else None
-    if broken and not already_done and ev.kind != "prompt" and any(c["kind"] != "rules" for c in broken) and (
+    if broken and not already_done and ev.kind not in ("prompt", "question") and any(c["kind"] != "rules" for c in broken) and (
             decision in ("deny", "review") or would or cannot_undo({"rule_id": rule_id, "signals": signals, "reason": reason})):
         decision, would, rule_id = "deny", None, "integrity:fail-closed"
         reason = (f"Squidbrake's own files changed ({integrity.describe(broken)}), so actions that wait for a person or "
@@ -2066,7 +2151,7 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
     # Undo: should a copy of what this changes be kept before it runs? A rule can ask by name (snapshot: required);
     # otherwise everything held for a person or flagged as irreversible gets rules.yaml `snapshots:` (default required).
     snap_want, snap_strict = None, False
-    if decision != "deny" and not already_ran:
+    if decision != "deny" and not already_ran and ev.kind != "question":
         named = rule.get("snapshot")
         risky = decision == "review" or any(s.get("check") in ("irreversible_command", "catastrophic_command")
                                             for s in signals)
@@ -2090,7 +2175,9 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
         "risk": risk_score, "risk_why": json.dumps(risk_why) if risk_why else None,
         "decision_ms": round((time.perf_counter() - started) * 1000, 2),
         "identity": identity_of(client),
+        "justification": why,
     }
+    delivered: list[dict] = []
     with audited_tx() as conn:
         record_policy_version(conn)
         conn.execute(events.insert().values(**row))
@@ -2099,6 +2186,9 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
               session_id=ev.session_id, status=status, decision=decision, rule_id=rule_id, reason=reason,
               input_sha256=_sha(row["input"]), output_sha256=_sha(row["output"]),
               signals=[f"{x['check']}:{x['effect']}" for x in signals] or None, would=would)
+        # Notes ride on an answer the agent reads now; a held action's answer comes later, so they wait for the next.
+        if (ev.metadata or {}).get("accepts_notes") and not already_done and decision != "review":
+            delivered = take_notes(conn, ev, client, row["id"])
         if (ev.metadata or {}).get("while_unreachable"):   # warn-only mode: it ran while nothing checked it
             audit(conn, client, "protection.was_off", row["id"], name=ev.name, source=ev.source,
                   at=(ev.metadata or {}).get("ran_at"))
@@ -2123,11 +2213,14 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
             start_proof(row["id"], ev.output)
     if status == "awaiting_approval":
         notify_approval_needed(row)
-        start_brief(row["id"])
+        if ev.kind != "question":
+            start_brief(row["id"])
+    if notify_rule and decision == "allow" and not already_done:
+        notify_rule_hit(notify_rule, row)
     return Decision(event_id=row["id"], decision=decision, reason=reason, rule_id=rule_id,
                     status=status, approval_deadline=deadline, signals=signals or None, would=would, risk=risk_score,
                     cannot_undo=cannot_undo({"rule_id": rule_id, "signals": signals, "reason": reason}),
-                    snapshot=snap_want, snapshot_strict=snap_strict)
+                    snapshot=snap_want, snapshot_strict=snap_strict, notes=delivered or None)
 
 
 _raw_inputs: dict[str, Any] = {}
@@ -2278,8 +2371,14 @@ def _preview(stored_json: str | None, limit: int = 280) -> str:
 
 def approval_message(row: dict) -> tuple[str, str]:
     who = row["source"] or row["client"]
+    if row.get("kind") == "question":
+        inp = row["input"] or "{}"
+        q = str(((json.loads(inp) if isinstance(inp, str) else inp) or {}).get("question", ""))
+        return f"Question from {who}", f"{who} asks: {q[:1500]}\nAnswer it (or decline) on the page; the agent waits."
     title = f"Approve {row['name']}?"
     body = f"{who} wants to run {row['name']} ({row['reason']}).\n{_preview(row['input'])}"
+    if row.get("justification"):
+        body += f"\nWhy, says the agent: {row['justification'][:500]}"
     for s in json.loads(row.get("signals") or "[]"):
         if s.get("check") == "effect":
             body += f"\nWhat it changes: {s['message']}"
@@ -2418,7 +2517,7 @@ def notify_approval_needed(row: dict) -> None:
                         "event": {k: row[k] for k in ("id", "name", "kind", "source", "session_id", "client",
                                                       "rule_id", "reason", "approval_deadline")},
                     }
-                    if cfg.get("slack_signing_secret"):
+                    if cfg.get("slack_signing_secret") and row.get("kind") != "question":   # an answer needs typing
                         # Squidbrake's Slack app (Settings): decide right in the message, no page to open
                         payload["blocks"] = slack_blocks(title, body, token, link, expires, undo_warning=cannot_undo(row))
                 httpx.post(cfg["slack_webhook"], timeout=10, json=payload).raise_for_status()
@@ -2430,7 +2529,8 @@ def notify_approval_needed(row: dict) -> None:
                     "topic": cfg["ntfy_topic"], "title": title, "message": body, "priority": 4,
                     "tags": ["raised_hand"], "click": link,
                     # can't be undone, or approvals need Face ID: approve on the page, which asks first
-                    "actions": ([] if cannot_undo(row) or cfg.get("require_device_signature") else [
+                    "actions": ([] if cannot_undo(row) or cfg.get("require_device_signature")
+                                or row.get("kind") == "question" else [
                         {"action": "http", "label": "Approve", "url": f"{base}/v1/a/{token}/approve", "method": "POST", "clear": True},
                     ]) + [
                         {"action": "http", "label": "Reject", "url": f"{base}/v1/a/{token}/reject", "method": "POST", "clear": True},
@@ -2459,7 +2559,7 @@ def siem_record(kind: str, r) -> dict:
             "key": g("client"), "session": g("session_id"), "tool": g("name"), "kind": g("kind"),
             "decision": g("decision"), "status": g("status"), "rule_id": g("rule_id"), "reason": g("reason"),
             "decided_by": g("decided_by"), "note": g("decision_note"), "risk": g("risk"), "would": g("would"),
-            "input": (g("input") or "")[:500] or None}
+            "justification": g("justification"), "input": (g("input") or "")[:500] or None}
 
 
 def expire_overdue() -> int:
@@ -2471,9 +2571,12 @@ def expire_overdue() -> int:
             return 0
     n = 0
     with audited_tx() as conn:
-        overdue = conn.execute(select(events.c.id, events.c.approval_on_timeout).where(
+        overdue = conn.execute(select(events.c.id, events.c.approval_on_timeout, events.c.source, events.c.client,
+                                      events.c.session_id).where(
             events.c.status == "awaiting_approval", events.c.approval_deadline < now)).all()
-        for eid, outcome in overdue:
+        for eid, outcome, source, client, session_id in overdue:
+            if stopped_for(source, client, session_id):
+                continue        # frozen while its agent is stopped: resuming gives the time back (shift_waiting)
             outcome = outcome or "deny"
             if conn.execute(update(events).where(events.c.id == eid, events.c.status == "awaiting_approval").values(
                     status="denied" if outcome == "deny" else "pending", decision=outcome, decided_by="timeout",
@@ -2534,6 +2637,10 @@ def decide(event_id: str, outcome: Literal["allow", "deny"], who: str, note: str
                                      f"{', decided by ' + row.decided_by if row.decided_by else ''})")
         if not can_approve(who):
             raise HTTPException(403, f"'{who}' can't approve. Ask an admin to give them approval rights in Team.")
+        if row.kind == "question" and outcome == "allow" and not (note or "").strip():
+            raise HTTPException(400, "type the answer in the note: that's what the agent gets")
+        if outcome == "allow" and row.kind != "question" and stopped_for(row.source, row.client, row.session_id):
+            raise HTTPException(409, f"{row.source or row.client} is stopped: resume it first, or reject this")
         allowed = json.loads(row.approvers) if row.approvers else None
         if keystore.enabled and allowed and not keystore.matches(who, allowed):
             raise HTTPException(403, f"rule '{row.rule_id}' only accepts approval from: {', '.join(allowed)}")
@@ -2993,6 +3100,45 @@ def agent_toggle(name: str, body: AgentToggleIn, request: Request, who: str = De
     return {"agents": connect.local_agents()}
 
 
+class InventoryIn(BaseModel):
+    machine: str = Field(..., min_length=1, max_length=100)
+    agents: list[dict] = Field(default_factory=list, max_length=50)   # connect.local_agents(): name, label, present, connected
+
+
+INVENTORY_STALE_DAYS = 14
+
+
+@app.post("/v1/agents/inventory")
+def report_inventory(body: InventoryIn, who: str = Depends(auth)):
+    """A computer says which agents it has and which go through Squidbrake (`squidbrake doctor` sends it), so the team
+    sees the ones that don't yet. Kept per computer; the latest report replaces the one before."""
+    clean = [{"name": str(a.get("name"))[:40], "label": str(a.get("label") or a.get("name"))[:60],
+              "connected": bool(a.get("connected"))} for a in body.agents if a.get("present") and a.get("name")]
+    with audited_tx() as conn:
+        inv = json.loads(conn.execute(select(gateway_state.c.value).where(gateway_state.c.key == "inventory")).scalar()
+                         or "{}")
+        if body.machine not in inv and len(inv) >= 2000:
+            raise HTTPException(429, "2000 computers reported already; remove old ones first")
+        before = inv.get(body.machine, {}).get("agents")
+        inv[body.machine] = {"at": utcnow(), "key": who, "agents": clean}
+        state_set(conn, "inventory", inv)
+        if before != clean:
+            audit(conn, who, "agents.inventory", body.machine, agents={a["name"]: a["connected"] for a in clean})
+    return {"recorded": body.machine, "not_connected": [a["label"] for a in clean if not a["connected"]]}
+
+
+@app.get("/v1/agents/inventory")
+def team_inventory(_: str = Depends(person)):
+    """Every computer that reported, newest first, and the agents on them that don't go through Squidbrake yet."""
+    inv = state_get("inventory", {}) or {}
+    stale = (datetime.now(timezone.utc) - timedelta(days=INVENTORY_STALE_DAYS)).isoformat().replace("+00:00", "Z")
+    machines = sorted(({"machine": m, **v, "stale": v["at"] < stale} for m, v in inv.items()),
+                      key=lambda m: m["at"], reverse=True)
+    missing = [{"machine": m["machine"], "agent": a["name"], "label": a["label"], "at": m["at"]}
+               for m in machines if not m["stale"] for a in m["agents"] if not a["connected"]]
+    return {"machines": machines, "not_connected": missing}
+
+
 def latest_known() -> str | None:
     """The newest version the CLI's daily update check saw (squidbrake/cli.py); this gateway never asks on its own."""
     try:
@@ -3161,8 +3307,46 @@ def stop_agents(body: StopIn, who: str, via: str = "dashboard") -> dict:
             s["all"] = entry
         state_set(conn, "stop", s)
         audit(conn, who, "controls.stopped", target, reason=body.reason, via=via)
+        if body.minutes and not body.session:   # it ends by itself: its waiting approvals get that time now
+            shift_waiting(conn, body.agent, body.minutes * 60, who)
     log.warning("STOP (%s) by %s: %s", target if target != "*" else "all agents", who, body.reason)
     return s
+
+
+def _iso_plus(iso: str, seconds: float) -> str:
+    d = datetime.fromisoformat(iso.replace("Z", "+00:00")) + timedelta(seconds=seconds)
+    return d.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def shift_waiting(conn, agent: str | None, seconds: float, who: str) -> int:
+    """Move the deadlines of approvals waiting on `agent` (None: every agent) by `seconds`: a stop freezes them, so
+    nothing times out while nobody may act on it. shortcut: an agent under two stops at once (its own and "all")
+    gets both; fine while stops are rare and short."""
+    if abs(seconds) < 1:
+        return 0
+    q = select(events.c.id, events.c.approval_deadline).where(events.c.status == "awaiting_approval",
+                                                              events.c.approval_deadline.is_not(None))
+    if agent:
+        q = q.where(or_(events.c.source == agent, events.c.client == agent))
+    rows = conn.execute(q).all()
+    for eid, deadline in rows:
+        conn.execute(update(events).where(events.c.id == eid).values(approval_deadline=_iso_plus(deadline, seconds)))
+    if rows:
+        audit(conn, who, "approvals.deadlines_moved", agent or "*", seconds=round(seconds), count=len(rows))
+    return len(rows)
+
+
+def _give_time_back(conn, agent: str | None, entry: dict | None, who: str) -> None:
+    """A stop ended early: the waiting approvals get back exactly the time they spent frozen."""
+    if not _live(entry):
+        return
+    now = datetime.now(timezone.utc)
+    if entry.get("until"):    # it was given its full length at the start: take back what's left
+        shift_waiting(conn, agent, -(datetime.fromisoformat(entry["until"].replace("Z", "+00:00")) - now)
+                      .total_seconds(), who)
+    else:
+        shift_waiting(conn, agent, (now - datetime.fromisoformat(entry["at"].replace("Z", "+00:00")))
+                      .total_seconds(), who)
 
 
 @app.post("/v1/controls/resume")
@@ -3173,8 +3357,9 @@ def controls_resume(body: StopIn, who: str = Depends(admin)):
         if body.session:
             s.setdefault("sessions", {}).pop(body.session, None)
         elif body.agent:
-            s.setdefault("agents", {}).pop(body.agent, None)
+            _give_time_back(conn, body.agent, s.setdefault("agents", {}).pop(body.agent, None), who)
         else:
+            _give_time_back(conn, None, s.get("all"), who)
             s["all"] = None
         state_set(conn, "stop", s)
         audit(conn, who, "controls.resumed", f"session:{body.session}" if body.session else body.agent or "*")
@@ -3188,12 +3373,59 @@ def resume_stop(agent: str | None, session: str | None, who: str) -> bool:
                        or '{"all": null, "agents": {}}')
         was = s.get("sessions", {}).pop(session, None) if session else \
             s.get("agents", {}).pop(agent, None) if agent else s.get("all")
+        if not session:
+            _give_time_back(conn, agent, was, who)
         if not agent and not session:
             s["all"] = None
         state_set(conn, "stop", s)
         if was:
             audit(conn, who, "controls.resumed", f"session:{session}" if session else agent or "*", via="command line")
     return bool(was)
+
+
+# ---- notes to a running agent
+
+class NoteIn(BaseModel):
+    agent: str | None = Field(None, max_length=200, description="an agent's source or key name")
+    session: str | None = Field(None, max_length=200, description="or one conversation")
+    text: str = Field(..., min_length=1, max_length=2000)
+
+
+@app.post("/v1/notes")
+def send_note(body: NoteIn, who: str = Depends(person)):
+    """Tell a running agent something ("the staging cluster is eu-west-1"): it gets it with its next action. Anyone who
+    may stop an agent may steer one; a note grants nothing."""
+    if not (can_approve(who) or keystore.is_admin(who)):
+        raise HTTPException(403, "only approvers and admins can send notes to agents")
+    if not (body.agent or body.session) or (body.agent and body.session):
+        raise HTTPException(400, "send it to one agent or one session")
+    row = {"id": str(uuid.uuid4()), "created_at": utcnow(), "by": who, "agent": body.agent,
+           "session_id": body.session, "text": redact(body.text.strip())}
+    with audited_tx() as conn:
+        conn.execute(notes.insert().values(**row))
+        audit(conn, who, "note.sent", row["id"], agent=body.agent, session=body.session, text_sha256=_sha(row["text"]))
+    return {**row, "delivered_at": None}
+
+
+@app.get("/v1/notes")
+def list_notes(limit: int = Query(50, ge=1, le=500), _: str = Depends(person)):
+    with engine.connect() as conn:
+        rows = conn.execute(select(notes).order_by(notes.c.created_at.desc()).limit(limit)).all()
+    return {"notes": [dict(r._mapping) for r in rows]}
+
+
+@app.delete("/v1/notes/{note_id}")
+def cancel_note(note_id: str, who: str = Depends(person)):
+    with audited_tx() as conn:
+        n = conn.execute(select(notes).where(notes.c.id == note_id)).first()
+        if n is None:
+            raise HTTPException(404, "no such note")
+        if n.by != who and not keystore.is_admin(who):
+            raise HTTPException(403, "only whoever sent it, or an admin, can take a note back")
+        if not conn.execute(notes.delete().where(notes.c.id == note_id, notes.c.delivered_at.is_(None))).rowcount:
+            raise HTTPException(409, "already delivered: the agent has it")
+        audit(conn, who, "note.cancelled", note_id)
+    return {"cancelled": note_id}
 
 
 def _cli_resume(args) -> int:
@@ -3229,7 +3461,7 @@ class SettingsIn(BaseModel):
     smtp_from: str | None = Field(None, max_length=200)
     siem_url: str | None = Field(None, max_length=1000)          # every decision, as it happens, to Splunk / Datadog / any HTTP
     siem_token: str | None = Field(None, max_length=500)
-    siem_format: Literal["json", "splunk", "datadog"] | None = None
+    siem_format: Literal["json", "splunk", "datadog", "otlp"] | None = None
     ai_briefs: bool | None = None                                # a plain-English risk note on each held action
     ai_key: str | None = Field(None, max_length=300)             # the customer's own Anthropic API key ("" removes it)
     ai_model: str | None = Field(None, max_length=100)

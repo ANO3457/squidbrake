@@ -185,6 +185,11 @@ async def gateway_recent_decisions() -> str:
     return await gw.recent_decisions()
 
 
+@server.tool(name=gw.ASK_TOOL, description=gw.ASK_HELP)
+async def gateway_ask_user(question: str = "", event_id: str = "") -> str:
+    return await gw.ask_user(question, event_id or None)
+
+
 @server.tool(name=gw.CHECK_TOOL)
 async def gateway_check_approval(event_id: str) -> str:
     """Finish a call that was WAITING FOR HUMAN APPROVAL: runs it if approved, reports if rejected,
