@@ -476,6 +476,12 @@ events = Table(
     Column("feedback_at", String(32)),
     Column("identity", String(200), index=True),    # who the agent acts for (identity_of): chains follow it            # how the person decided, e.g. "passkey: Pat's iPhone"
     Column("justification", Text),                  # why the agent says it's doing this (rule `justification:`), redacted
+    # two-person approval (rule `required_approvals:`): who approved so far, JSON [{by, at, note, with}]
+    Column("required_approvals", Integer),
+    Column("approvals", Text),
+    # rule `escalate_after_seconds:` / `escalate_to:`: when nobody decided by then, more people may, and are told
+    Column("escalate_at", String(32), index=True),
+    Column("escalate_to", Text),
 )
 
 # A person's note to a running agent ("use the staging database, not prod"): delivered with the agent's next action
@@ -1075,6 +1081,10 @@ class Policy:
                         "mode": _rule_mode(r, r.get("id") or f"rule-{i}"),
                         # the agent must (required) or may (optional) say why; the approver sees it
                         "justification": str(r["justification"]).lower() if r.get("justification") else None,
+                        # this many different people approve before it runs (one rejection is enough to stop it)
+                        "required_approvals": r.get("required_approvals", 1),
+                        "escalate_after_seconds": r.get("escalate_after_seconds"),
+                        "escalate_to": [r["escalate_to"]] if isinstance(r.get("escalate_to"), str) else r.get("escalate_to"),
                     })
                 default = data.get("default", "allow")
                 if default not in ("allow", "deny", "review") or \
@@ -1083,6 +1093,14 @@ class Policy:
                                      "or review)")
                 if any(r["justification"] not in (None, "required", "optional") for r in rules):
                     raise ValueError("justification must be required or optional")
+                for r in rules:
+                    n, esc = r["required_approvals"], r["escalate_after_seconds"]
+                    if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= 10:
+                        raise ValueError(f"{r['id']}: required_approvals must be a number from 1 to 10")
+                    if esc is not None and (isinstance(esc, bool) or not isinstance(esc, int)
+                                            or not 1 <= esc < r["timeout_seconds"] or not r["escalate_to"]):
+                        raise ValueError(f"{r['id']}: escalate_after_seconds needs escalate_to, and must be shorter "
+                                         "than timeout_seconds")
                 if any(r["on_timeout"] not in ("allow", "deny") or r["timeout_seconds"] < 1 for r in rules):
                     raise ValueError("on_timeout must be 'allow' or 'deny' and timeout_seconds >= 1")
                 hc = {**HISTORY_DEFAULTS, **(data.get("history_checks") or {})}
@@ -1154,7 +1172,8 @@ class Policy:
                 log.exception("failed to load %s, keeping previous rules", self.path)
             self._sig = sig
 
-    DEFAULT_RULE = {"timeout_seconds": APPROVAL_TIMEOUT, "on_timeout": "deny", "approvers": None, "justification": None}
+    DEFAULT_RULE = {"timeout_seconds": APPROVAL_TIMEOUT, "on_timeout": "deny", "approvers": None, "justification": None,
+                    "required_approvals": 1, "escalate_after_seconds": None, "escalate_to": None}
 
     def shadow_for(self, source: str | None, client: str, rule_id: str | None = None) -> bool:
         """Shadow mode: record what would happen, but let it through (everything, or the agents listed). A rule or
@@ -2176,6 +2195,11 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
         "decision_ms": round((time.perf_counter() - started) * 1000, 2),
         "identity": identity_of(client),
         "justification": why,
+        "required_approvals": rule.get("required_approvals") if deadline and (rule.get("required_approvals") or 1) > 1
+        else None,
+        "escalate_at": _iso_plus(now, rule["escalate_after_seconds"]) if deadline and rule.get("escalate_after_seconds")
+        else None,
+        "escalate_to": json.dumps(rule["escalate_to"]) if deadline and rule.get("escalate_after_seconds") else None,
     }
     delivered: list[dict] = []
     with audited_tx() as conn:
@@ -2480,7 +2504,7 @@ def _truncate_discord(s: str, limit: int) -> str:
     return truncated + "…"
 
 
-def notify_approval_needed(row: dict) -> None:
+def notify_approval_needed(row: dict, escalated_to: list[str] | None = None) -> None:
     """Tell a human, wherever they are: Slack (or any incoming webhook) and/or a phone push via ntfy.
     Both carry a signed link that opens a one-tap Approve / Reject page."""
     cfg = settings()
@@ -2492,6 +2516,11 @@ def notify_approval_needed(row: dict) -> None:
     title, body = approval_message(row)
     if cannot_undo(row):                       # said first, before anything else about it
         title = f"Can't be undone: {title}"
+    if escalated_to:
+        title = f"Escalated to {', '.join(escalated_to)}: {title}"
+        body += "\nNobody decided in time, so it's escalated: they can decide it now too."
+    if (row.get("required_approvals") or 1) > 1:
+        body += f"\nNeeds {row['required_approvals']} different people to approve; one rejection stops it."
     expires = row["approval_deadline"]
 
     def send():
@@ -2589,6 +2618,32 @@ def expire_overdue() -> int:
     return n
 
 
+def escalate_due() -> int:
+    """Approvals nobody decided by the rule's escalate_after_seconds: the escalate_to people may decide now too, and
+    everyone is told again. Once per event; idempotent, safe from any worker."""
+    now = utcnow()
+    with engine.connect() as conn:
+        if conn.execute(select(events.c.id).where(events.c.status == "awaiting_approval",
+                                                  events.c.escalate_at < now).limit(1)).first() is None:
+            return 0
+    done = []
+    with audited_tx() as conn:
+        for row in conn.execute(select(events).where(events.c.status == "awaiting_approval",
+                                                     events.c.escalate_at < now)).all():
+            if stopped_for(row.source, row.client, row.session_id):
+                continue                          # frozen like its deadline
+            to = json.loads(row.escalate_to or "[]")
+            before = json.loads(row.approvers) if row.approvers else None
+            wider = None if before is None else list(dict.fromkeys(before + to))   # None stays "any approver"
+            if conn.execute(update(events).where(events.c.id == row.id, events.c.escalate_at.is_not(None)).values(
+                    escalate_at=None, approvers=json.dumps(wider) if wider else None)).rowcount:
+                audit(conn, "timeout", "event.escalated", row.id, to=to)
+                done.append((dict(row._mapping), to))
+    for r, to in done:
+        notify_approval_needed(r, escalated_to=to)
+    return len(done)
+
+
 def can_approve(who: str) -> bool:
     return keystore.can_approve(who)
 
@@ -2651,20 +2706,43 @@ def decide(event_id: str, outcome: Literal["allow", "deny"], who: str, note: str
         if owner and owner == who and (settings().get("second_person") or per_rule):
             raise HTTPException(403, f"'{row.client}' is {who}'s own agent and second-person approval is on, "
                                      "so someone else has to decide")
+        # Two-person approval: each approval is kept; it runs once enough different people approved. A rejection
+        # by any one of them stops it at once.
+        need, so_far = row.required_approvals or 1, json.loads(row.approvals or "[]")
+        partial = False
+        if outcome == "allow" and need > 1:
+            if any(a["by"] == who for a in so_far):
+                raise HTTPException(409, f"you approved this already; it needs {need - len(so_far)} more "
+                                         "approval(s) from someone else")
+            now_list = so_far + [{"by": who, "at": utcnow(), "note": note, "with": decided_with}]
+            if len(now_list) < need:
+                same = events.c.approvals.is_(None) if row.approvals is None else events.c.approvals == row.approvals
+                if not conn.execute(update(events).where(events.c.id == event_id, events.c.status == "awaiting_approval",
+                                                         same).values(approvals=json.dumps(now_list))).rowcount:
+                    raise HTTPException(409, "someone else decided a moment ago: look again")
+                audit(conn, who, "event.approval_added", event_id, note=note, via=via, count=len(now_list), needed=need,
+                      **({"device_proof": kept_proof, "decided_with": decided_with} if kept_proof else {}))
+                partial = True    # still waiting: the next approver decides it
+            who_all = " + ".join(a["by"] for a in now_list)
+            notes_all = "; ".join(f"{a['by']}: {a['note']}" for a in now_list if a.get("note")) or None
+        else:
+            now_list, who_all, notes_all = None, who, note
         # Conditional update: if two approvers click at once, exactly one wins.
-        won = conn.execute(update(events).where(
+        won = partial or conn.execute(update(events).where(
             events.c.id == event_id, events.c.status == "awaiting_approval",
         ).values(status="pending" if outcome == "allow" else "denied", decision=outcome,
-                 decided_by=who, decided_at=utcnow(), decision_note=note, decided_with=decided_with)).rowcount
+                 decided_by=who_all[:200], decided_at=utcnow(), decision_note=notes_all, decided_with=decided_with,
+                 **({"approvals": json.dumps(now_list)} if now_list else {}))).rowcount
         if not won:
             raise HTTPException(409, "event was decided by someone else a moment ago")
-        if outcome == "allow":
-            grant_capabilities(conn, dict(conn.execute(select(events).where(events.c.id == event_id)).first()._mapping))
-        audit(conn, who, "event.approved" if outcome == "allow" else "event.rejected", event_id, note=note, via=via,
-              **({"device_proof": kept_proof, "decided_with": decided_with} if kept_proof else {}))
-        forwarder.emit(siem_record("approved" if outcome == "allow" else "rejected",
-                                   conn.execute(select(events).where(events.c.id == event_id)).first()))
-    audit_log.info(json.dumps({"id": event_id, "approval": outcome, "decided_by": who, "via": via}))
+        if not partial:
+            if outcome == "allow":
+                grant_capabilities(conn, dict(conn.execute(select(events).where(events.c.id == event_id)).first()._mapping))
+            audit(conn, who, "event.approved" if outcome == "allow" else "event.rejected", event_id, note=note, via=via,
+                  **({"device_proof": kept_proof, "decided_with": decided_with} if kept_proof else {}))
+            forwarder.emit(siem_record("approved" if outcome == "allow" else "rejected",
+                                       conn.execute(select(events).where(events.c.id == event_id)).first()))
+    audit_log.info(json.dumps({"id": event_id, "approval": "added" if partial else outcome, "decided_by": who, "via": via}))
     return current_decision(event_id)
 
 
@@ -2734,7 +2812,8 @@ def cannot_undo(d: dict) -> bool:
 
 def row_to_dict(row) -> dict:
     d = dict(row._mapping)
-    for f in ("input", "output", "metadata", "approvers", "signals", "snapshot", "proof", "brief"):
+    for f in ("input", "output", "metadata", "approvers", "signals", "snapshot", "proof", "brief", "approvals",
+              "escalate_to"):
         if d.get(f) is not None:
             d[f] = json.loads(d[f])
     d["cannot_undo"] = cannot_undo(d)
@@ -2765,6 +2844,7 @@ async def _expiry_loop():
     while True:
         try:
             await run_in_threadpool(expire_overdue)
+            await run_in_threadpool(escalate_due)
         except Exception:
             log.exception("approval expiry failed")
         await asyncio.sleep(2)
@@ -4446,6 +4526,61 @@ def _add_rules(block: str, before: str | None, who: str, what: str) -> dict:
     with audited_tx() as conn:
         audit(conn, who, "policy.edited", what, backup=backup.name)
     return {"ok": True, "backup": backup.name, "rules": len(policy.rules)}
+
+
+# ---- rules history: every version that decided something, a diff against today's, and putting one back
+
+@app.get("/v1/policy/versions")
+def policy_version_list(_: str = Depends(person)):
+    policy._maybe_reload()
+    with engine.connect() as conn:
+        rows = conn.execute(select(policy_versions.c.fingerprint, policy_versions.c.first_seen)
+                            .order_by(policy_versions.c.first_seen.desc()).limit(200)).all()
+    return {"current": policy.fingerprint,
+            "versions": [{"fingerprint": r.fingerprint, "first_seen": r.first_seen,
+                          "current": r.fingerprint == policy.fingerprint} for r in rows]}
+
+
+def _version_text(fp: str) -> str:
+    with engine.connect() as conn:
+        text_ = conn.execute(select(policy_versions.c.content).where(policy_versions.c.fingerprint == fp)).scalar()
+    if text_ is None:
+        raise HTTPException(404, "no such rules version")
+    return text_
+
+
+@app.get("/v1/policy/versions/{fp}")
+def policy_version_get(fp: str, _: str = Depends(person)):
+    """That version's text, and what changed from it to today's rules (a unified diff)."""
+    import difflib
+    old = _version_text(fp)
+    policy._maybe_reload()
+    diff = "".join(difflib.unified_diff(old.splitlines(keepends=True), policy.source.splitlines(keepends=True),
+                                        f"rules {fp}", f"rules now ({policy.fingerprint})"))
+    return {"fingerprint": fp, "content": old, "diff_to_current": diff, "current": fp == policy.fingerprint}
+
+
+@app.post("/v1/policy/versions/{fp}/restore")
+def policy_version_restore(fp: str, who: str = Depends(admin)):
+    """Put an earlier rules.yaml back (a backup of today's is kept). Only if it still loads as it did."""
+    old = _version_text(fp)
+    if verify.rules_fingerprint(old) != fp:
+        raise HTTPException(409, "that stored version doesn't match its fingerprint; not restoring it")
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:          # it must load with this version of Squidbrake first
+        trial = Policy(Path(d) / "rules.yaml")
+        trial.path.write_text(old, encoding="utf-8")
+        trial._maybe_reload()
+    if trial.fingerprint != fp:
+        raise HTTPException(400, "that version doesn't load with this version of Squidbrake (see the gateway log)")
+    try:
+        backup = policy_edit.replace_all(policy.path, old)
+    except OSError as e:
+        raise HTTPException(500, f"couldn't write the rules file: {e}")
+    policy._maybe_reload()
+    with audited_tx() as conn:
+        audit(conn, who, "policy.restored", fp, backup=backup.name)
+    return {"ok": policy.fingerprint == fp, "fingerprint": policy.fingerprint, "backup": backup.name}
 
 
 def _held_and_decided(days: int = 30):

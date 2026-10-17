@@ -138,8 +138,21 @@ Rules with `action: review` hold the call until a person approves or rejects it:
   timeout_seconds: 600     # default APPROVAL_TIMEOUT (300)
   on_timeout: deny         # or allow
   approvers: [alice, bob]  # optional; default = any approver key
+  required_approvals: 2    # optional: two different people approve (maker-checker); one rejection stops it
+  escalate_after_seconds: 300   # optional: nobody decided in 5 minutes? then
+  escalate_to: [carol]          #   carol may decide too, and everyone is told again
   match: { name: "payments.*" }
 ```
+
+- **Two-person approval (`required_approvals:`).** The call runs once that many *different* people approved it; the
+  same person can't count twice, a key never approves its own request, and one rejection stops it. The queue shows
+  "1 of 2 approvals"; the audit trail has each approval (`event.approval_added`), signed by a passkey if one was used,
+  and `verify.py` checks those signatures too. One-tap links approve as the Settings "notify as" person, so the
+  second approval comes from someone else's dashboard or phone.
+- **Escalation (`escalate_after_seconds:` + `escalate_to:`).** If nobody decided by then, the people in `escalate_to`
+  may decide too (added to `approvers:`; with no `approvers:` anyone already could), and the notification goes out
+  again marked *Escalated*. It must be shorter than `timeout_seconds`. Frozen, like the deadline, while the agent is
+  stopped.
 
 - The first `POST /v1/events` returns `"decision": "review"`. **The Python client handles this for
   you**: `check()` and `@gw.guard` block until the call is decided, then run the tool or raise `Denied`.
@@ -194,18 +207,27 @@ Code's Write or Edit can't.
 
 **Questions from the agent (`ask_user`).** The MCP connectors give the agent an `<app>_ask_user` tool. A question
 waits in the approval queue (and on Slack, Teams, phone, email) with an answer box: *Send answer* gives the agent your
-words; *Decline* tells it not to guess. Any client can ask with `POST /v1/events` and `{"kind": "question",
-"input": {"question": "..."}}`; the answer is the decision's `decision_note`.
+words; *Decline* tells it not to guess. From Python: `answer = gw.ask("Staging or prod?")` (or
+`await gw.aask(...)`); it raises `Denied` if they decline or nobody answers in time. Any other client can ask with
+`POST /v1/events` and `{"kind": "question", "input": {"question": "..."}}`; the answer is the decision's
+`decision_note`.
 
 **Notes to a running agent.** *Note* next to an agent in Reports, or *send a note* next to a conversation, or
 `POST /v1/notes {"agent": "..."}` / `{"session": "..."}`. The agent gets it with its next action: Claude Code as
-context for its next step, MCP tools at the top of the next result. A note steers; it can't approve or lift anything.
+context for its next step, MCP tools at the top of the next result, your own Python agent through
+`Gateway(on_note=...)`. Cursor, Codex, Gemini CLI, VS Code and Antigravity surely read only a refusal's message, so
+there the next action is refused once with the note in it, and runs when the agent tries again. A note steers; it can't approve or lift anything.
 It's kept in the audit trail, with who sent it and when it was delivered. A note can be taken back until it's delivered
 (`DELETE /v1/notes/{id}`).
 
 **Stops freeze approval deadlines.** While an agent is stopped, its waiting approvals don't time out and can't be
 approved (only rejected). When it's resumed they get back the time they spent frozen; a stop with a time limit gives
 its whole length up front.
+
+**Rules history.** Every version of rules.yaml that decided something is kept (with its fingerprint, which each
+decision records). *Settings → Rules → History* shows what changed since any of them, and an admin can **Put back** an
+earlier version (`POST /v1/policy/versions/{fingerprint}/restore`): only if it still loads, with a backup of today's
+file, and in the audit trail.
 
 **Agents across the team.** Each computer's `squidbrake doctor` tells the gateway which agents it has and which go
 through Squidbrake (names only; off with `SQUIDBRAKE_NO_INVENTORY=1`). *Settings → Agents across the team* lists the

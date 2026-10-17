@@ -41,7 +41,9 @@ def gateway():
         except httpx.HTTPError:
             time.sleep(0.3)
     agent = re.search(r"agent\s+(gw_\S+)", "".join(out)).group(1)
-    yield Gateway(url, agent, source="client-test", session_id="run-1")
+    g = Gateway(url, agent, source="client-test", session_id="run-1")
+    g.admin_key = re.search(r"admin\s+(gw_\S+)", "".join(out)).group(1)   # for tests that play the person
+    yield g
     p.terminate()
     p.wait(10)
 
@@ -99,3 +101,25 @@ def test_guard_tools_for_agent_frameworks(gateway):
     assert not [r for r in ran if "rm -rf" in r]
     with pytest.raises(TypeError):
         gateway.guard_tools([object()])
+
+
+def test_ask_returns_a_persons_answer_and_notes_reach_on_note(gateway):
+    admin = {"X-Gateway-Key": gateway.admin_key}
+
+    def answer():
+        for _ in range(100):
+            rows = httpx.get(gateway.url + "/v1/events", headers=admin,
+                             params={"status": "awaiting_approval", "limit": 20}).json()["events"]
+            q = next((e for e in rows if e["kind"] == "question"), None)
+            if q:
+                httpx.post(f"{gateway.url}/v1/events/{q['id']}/approve", headers=admin, json={"note": "staging"})
+                return
+            time.sleep(0.1)
+    threading.Thread(target=answer, daemon=True).start()
+    assert gateway.ask("Which database?") == "staging"
+
+    got = []
+    g = Gateway(gateway.url, gateway._headers["X-Gateway-Key"], source="client-notes", on_note=got.append)
+    httpx.post(gateway.url + "/v1/notes", headers=admin, json={"agent": "client-notes", "text": "slow down"})
+    g.check("Read", {"file_path": "README.md"})
+    assert [n["text"] for n in got] == ["slow down"]

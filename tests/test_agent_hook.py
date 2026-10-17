@@ -202,3 +202,17 @@ def test_codex_mcp_tools_and_our_own_servers(run):
     assert allowed("codex", run("codex", {"tool_name": "mcp__gw-stripe__create_refund", "tool_input": {},
                                           "session_id": "x"}))     # the proxy already checks this one
     assert agent_hook.mcp_call("Linear App", "save_issue", '{"id": 1}', None) == ("linear-app.save_issue", {"id": 1})
+
+
+@pytest.mark.parametrize("agent", list(CASES))
+def test_a_note_reaches_every_agent_as_a_refusal_once(run, agent):
+    """These agents surely read only a refusal's message: the note comes as one, and the action runs on the next try."""
+    from fastapi.testclient import TestClient
+    import server
+    listing = CASES[agent][1]
+    session = listing.get("conversation_id") or listing.get("session_id") or listing.get("conversationId")
+    with TestClient(server.app) as c:
+        c.post("/v1/notes", headers={"X-Gateway-Key": "k2"}, json={"session": session, "text": "use the staging db"})
+    out = run(agent, listing)
+    assert not allowed(agent, out) and "NOTE FROM boss" in json.dumps(out) and "use the staging db" in json.dumps(out)
+    assert allowed(agent, run(agent, listing))          # delivered once; the next try runs

@@ -200,8 +200,16 @@ def unreachable(url: str, e: httpx.HTTPError, what: str = "action") -> str:
             f"squidbrake connect all --remove")
 
 
+def notes_text(d: dict) -> str:
+    """Notes people left for this agent (Decision.notes). Same words as claude_hook.py and gw_async.py."""
+    return "".join(f"NOTE FROM {n.get('by')} (a person on your team, sent through Squidbrake): {n.get('text')}\n\n"
+                   for n in d.get("notes") or [])
+
+
 def check(agent: str, name: str, inp: dict, session: str | None) -> None:
-    body = {"name": name, "kind": "agent_hook", "input": inp, "source": agent, "session_id": session}
+    # These agents read only a refusal's message for sure, so a note comes as one: that action waits a turn.
+    body = {"name": name, "kind": "agent_hook", "input": inp, "source": agent, "session_id": session,
+            "metadata": {"accepts_notes": True}}
     line = inp.get("command") if name == "Bash" and effects is not None else None
     cwd = inp.get("cwd") or os.getcwd()
     if line:
@@ -230,6 +238,13 @@ def check(agent: str, name: str, inp: dict, session: str | None) -> None:
                 d = r.json()
             if offline is not None:
                 offline.refresh(http, URL)
+            told = notes_text(d)
+            if told and d["decision"] == "allow":
+                http.post(f"/v1/events/{d['event_id']}/result", json={"error": "not run: a person's note came first"})
+                answer(agent, False, f"{told}This action did not run, so you could read the note first. If it still "
+                                     "fits, run it again.")
+            if told:          # notes come only with a first answer, so a refusal's reason carries them
+                d["reason"] = f"{told}{d.get('reason') or ''}"
             if d["decision"] == "allow":
                 kept = undo.snapshot(line, cwd) if line and undo is not None else None
                 if kept is None and d.get("snapshot_strict"):

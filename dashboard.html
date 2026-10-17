@@ -877,6 +877,11 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
       <h3 class="sub-h">Starter packs</h3>
       <p class="hint">Rules for a kind of agent, added to your rules.yaml after the read rule, so blocks above still win. A backup is kept.</p>
       <div id="rulePacks" class="packs"></div>
+      <h3 class="sub-h">History</h3>
+      <p class="hint">Every version of rules.yaml that decided something, newest first. <b>Changes</b> shows what's different
+        today; <b>Put back</b> restores that version (a backup of today's is kept, and it's in the audit trail).</p>
+      <div id="ruleHistory"></div>
+      <pre id="ruleDiff" class="mono" hidden style="max-height:320px;overflow:auto;font-size:12px;background:var(--page);border:1px solid var(--border);border-radius:8px;padding:8px"></pre>
       <h3 class="sub-h">Test a rule</h3>
       <form class="form-grid" id="ruleTest">
         <label>Tool name <input name="name" placeholder="e.g. stripe.create_refund" required></label>
@@ -1728,6 +1733,8 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     if (!me) return "Checking permissions…";
     if (!me.can_approve) return `Key "${me.client}" can't approve. Use an approver key.`;
     if (me.auth_enabled && e.client === me.client) return "This request came from your own key; someone else must decide.";
+    if ((e.approvals || []).some((a) => a.by === me.client))
+      return `You approved. Waiting for ${(e.required_approvals || 1) - e.approvals.length} more approval(s) from someone else.`;
     if (me.auth_enabled && e.approvers && e.approvers.length && !e.approvers.includes(me.client))
       return `Only ${e.approvers.join(", ")} can decide this one.`;
     return null;
@@ -1761,8 +1768,10 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
       btns.forEach((b) => (b.disabled = true));
       try {
         const device_proof = await deviceProof(e.id, outcome);
-        await apiPost(`/v1/events/${encodeURIComponent(e.id)}/${outcome}`, { note: note.value.trim() || null, device_proof });
-        toast(isQ ? (outcome === "approve" ? "Answer sent" : "Declined") : `${outcome === "approve" ? "Approved" : "Rejected"} ${e.name}`);
+        const r = await apiPost(`/v1/events/${encodeURIComponent(e.id)}/${outcome}`, { note: note.value.trim() || null, device_proof });
+        toast(isQ ? (outcome === "approve" ? "Answer sent" : "Declined")
+          : r && r.decision === "review" ? `Your approval is in: ${e.name} needs someone else too`
+          : `${outcome === "approve" ? "Approved" : "Rejected"} ${e.name}`);
         shortcutIndexHint = Math.max(0, queue.findIndex((q) => q.id === e.id));   // the next `j` lands on the request that moved up
         queue = queue.filter((q) => q.id !== e.id);
         shortcutQueueId = null; cancelApprove();   // never carry a selection over to the next request
@@ -1896,6 +1905,8 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
             ? el("div", { class: "why", style: "font-size:14px", text: `❓ ${e.input.question}` })
             : el("div", { class: "inp", title: preview(e.input), text: preview(e.input) }),
           e.justification ? el("div", { class: "why" }, el("b", { text: "Why, says the agent: " }), e.justification) : null,
+          (e.required_approvals || 1) > 1 ? el("div", { class: "why" }, el("b", { text: `${(e.approvals || []).length} of ${e.required_approvals} approvals` }),
+            (e.approvals || []).length ? `: ${e.approvals.map((a) => a.by).join(", ")}` : ": needs different people; one rejection stops it") : null,
           briefEl(e),
           signalsEl(e.signals),
           storyDetails(e),
@@ -2744,7 +2755,24 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     try { const r = await apiPost("/v1/settings/siem-test"); $("#siemMsg").textContent = r.ok ? "Delivered ✓" : r.error; }
     catch (err) { $("#siemMsg").textContent = err.message; }
   });
+  async function loadRuleHistory() {
+    let v;
+    try { v = await api("/v1/policy/versions"); } catch { return; }
+    $("#ruleHistory").replaceChildren(...v.versions.slice(0, 15).map((x) => el("div", { class: "suggest" },
+      el("div", { class: "grow" }, el("code", { text: x.fingerprint }), x.current ? el("span", { class: "tag", style: "margin-left:6px", text: "in use" }) : null,
+        el("div", { class: "sub", text: `first used ${fmtAgo(x.first_seen)}` })),
+      x.current ? null : el("button", { class: "btn", type: "button", text: "Changes", onclick: async () => {
+        try { const d = await api(`/v1/policy/versions/${x.fingerprint}`); $("#ruleDiff").hidden = false; $("#ruleDiff").textContent = d.diff_to_current || "(no differences)"; }
+        catch (err) { toast(err.message); }
+      } }),
+      x.current || !(me && me.is_admin) ? null : el("button", { class: "btn", type: "button", text: "Put back", onclick: async () => {
+        if (!confirm(`Put rules version ${x.fingerprint} back? Today's rules.yaml is kept as a backup.`)) return;
+        try { const r = await apiPost(`/v1/policy/versions/${x.fingerprint}/restore`); toast(`Rules put back (backup: ${r.backup})`); loadRuleHistory(); }
+        catch (err) { toast(err.message); }
+      } }))));
+  }
   async function loadRuleHelp() {
+    loadRuleHistory();
     let s, p;
     try { [s, p] = await Promise.all([api("/v1/policy/suggestions"), api("/v1/policy/packs")]); } catch { return; }
     $("#ruleSuggest").replaceChildren(...(s.suggestions.length ? [el("h3", { class: "sub-h", text: "Suggested: stop asking about these" }),

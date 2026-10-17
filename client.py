@@ -74,14 +74,17 @@ def _log_pending(name: str, decision: dict) -> None:
 class Gateway:
     def __init__(self, url: str | None = None, api_key: str | None = None, *, source: str | None = None,
                  session_id: str | None = None, fail_open: bool = False, timeout: float = 5.0,
-                 on_approval_pending: Callable[[str, dict], None] | None = _log_pending):
+                 on_approval_pending: Callable[[str, dict], None] | None = _log_pending,
+                 on_note: Callable[[dict], None] | None = None):
         """fail_open=False (default): if the gateway is unreachable, tools do NOT run.
         fail_open=True: tools run anyway and the call goes unrecorded. (A call already held for
         approval never runs without a decision, even with fail_open.)
-        on_approval_pending(name, decision) is called once when a call is held for a human."""
+        on_approval_pending(name, decision) is called once when a call is held for a human.
+        on_note({by, text, at}) gets each note a person sends this agent (put it in front of your model); without it,
+        notes wait for an agent that can pass them on."""
         self.url = (url or os.environ["GATEWAY_URL"]).rstrip("/")
         self.source, self.session_id, self.fail_open = source, session_id, fail_open
-        self.on_approval_pending = on_approval_pending
+        self.on_approval_pending, self.on_note = on_approval_pending, on_note
         headers = {"X-Gateway-Key": api_key or os.getenv("GATEWAY_API_KEY", "")}
         self._http = httpx.Client(base_url=self.url, headers=headers, timeout=timeout)
         self._headers, self._timeout = headers, timeout
@@ -97,8 +100,9 @@ class Gateway:
 
     # ---- payload helpers
     def _event(self, name, input, kind, metadata, **extra) -> dict:
+        metadata = {**({"accepts_notes": True} if self.on_note else {}), **(metadata or {})}
         return {"name": name, "kind": kind, "input": input, "source": self.source,
-                "session_id": self.session_id, "metadata": metadata or {}, **extra}
+                "session_id": self.session_id, "metadata": metadata, **extra}
 
     def _first(self, name: str, resp: httpx.Response | None, input: Any = None, kind: str = "tool_call") -> dict | None:
         if resp is None:
@@ -114,6 +118,8 @@ class Gateway:
             raise GatewayUnavailable(f"gateway unreachable, refusing to run '{name}'")
         resp.raise_for_status()
         d = resp.json()
+        for n in d.get("notes") or []:
+            self.on_note(n)
         if d["decision"] == "review" and self.on_approval_pending:
             self.on_approval_pending(name, d)
         return d
@@ -195,6 +201,23 @@ class Gateway:
         """Ask before running. Returns event_id; raises Denied if blocked. Waits while a human reviews it.
         snapshot(input) returns the record as it is now; when the rules want an undo copy it's kept on the gateway
         before the call runs, and if it fails where a copy is required, the call doesn't run (Denied)."""
+        d = self._decided(name, input, kind, metadata)
+        eid = self._final(name, d)
+        self._keep(name, d, input, snapshot)
+        return eid
+
+    def ask(self, question: str) -> str:
+        """Ask a person on the team and wait for the answer (they answer in the dashboard or on their phone).
+        Raises Denied if they decline, nobody answers in time, or the gateway is unreachable and won't take it."""
+        d = self._decided("ask_user", {"question": question}, "question", None)
+        if d is None:
+            raise GatewayUnavailable("Squidbrake is unreachable, so nobody could be asked")
+        self._final("ask_user", d)
+        self.result(d["event_id"], output={"answer": d.get("decision_note")})
+        return d.get("decision_note") or ""
+
+    def _decided(self, name: str, input: Any, kind: str, metadata: dict | None) -> dict | None:
+        """Send the call and wait while a person decides. None: unreachable and the rules let it run unrecorded."""
         try:
             resp = self._http.post("/v1/events", json=self._event(name, input, kind, metadata))
         except httpx.TransportError:
@@ -210,9 +233,7 @@ class Gateway:
                 if self._gave_up(d):
                     raise GatewayUnavailable(f"lost the gateway while '{name}' awaited approval")
                 time.sleep(2)
-        eid = self._final(name, d)
-        self._keep(name, d, input, snapshot)
-        return eid
+        return d
 
     def result(self, event_id: str | None, *, output: Any = None, error: str | None = None,
                duration_ms: float | None = None) -> None:
@@ -233,6 +254,21 @@ class Gateway:
     # ---- async API
     async def acheck(self, name: str, input: Any = None, *, kind: str = "tool_call", metadata: dict | None = None,
                      snapshot: Callable[[Any], Any] | None = None) -> str | None:
+        d = await self._adecided(name, input, kind, metadata)
+        eid = self._final(name, d)
+        await self._akeep(name, d, input, snapshot)
+        return eid
+
+    async def aask(self, question: str) -> str:
+        """ask(), for async code."""
+        d = await self._adecided("ask_user", {"question": question}, "question", None)
+        if d is None:
+            raise GatewayUnavailable("Squidbrake is unreachable, so nobody could be asked")
+        self._final("ask_user", d)
+        await self.aresult(d["event_id"], output={"answer": d.get("decision_note")})
+        return d.get("decision_note") or ""
+
+    async def _adecided(self, name: str, input: Any, kind: str, metadata: dict | None) -> dict | None:
         try:
             resp = await self._ahttp().post("/v1/events", json=self._event(name, input, kind, metadata))
         except httpx.TransportError:
@@ -248,9 +284,7 @@ class Gateway:
                 if self._gave_up(d):
                     raise GatewayUnavailable(f"lost the gateway while '{name}' awaited approval")
                 await asyncio.sleep(2)
-        eid = self._final(name, d)
-        await self._akeep(name, d, input, snapshot)
-        return eid
+        return d
 
     async def aresult(self, event_id: str | None, *, output: Any = None, error: str | None = None,
                       duration_ms: float | None = None) -> None:

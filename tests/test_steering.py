@@ -141,8 +141,7 @@ def test_note_is_delivered_once_to_the_right_agent(c, rules):
     d = post(c, "Read", {"file_path": "a"}, source=who, metadata={"accepts_notes": True})
     assert [n["text"] for n in d["notes"]] == ["use the staging cluster, eu-west-1"] and d["notes"][0]["by"] == "boss"
     assert post(c, "Read", {"file_path": "b"}, source=who, metadata={"accepts_notes": True}).get("notes") is None
-    log = c.get("/v1/audit/log", headers=BOSS).json()
-    assert any(e["action"] == "note.delivered" for e in (log if isinstance(log, list) else log.get("entries", [])))
+    assert any(e["action"] == "note.delivered" for e in c.get("/v1/audit/log", headers=BOSS).json()["entries"])
 
 
 def test_note_waits_while_the_action_is_held(c, rules):
@@ -310,3 +309,90 @@ def test_back_office_pack_loads_and_does_what_it_says(c, rules):
     assert post(c, "hubspot.export_contacts", {}, source=who)["decision"] == "allow"
     assert post(c, "snowflake.query", {"sql": "select 1"}, source=who)["decision"] == "allow"
     assert post(c, "snowflake.query", {"sql": "delete from orders"}, source=who)["decision"] == "review"
+
+
+# ---- two-person approval and escalation
+
+BOSS2 = {"X-Gateway-Key": "k3"}
+QUORUM = RULES + """
+  - id: big-payouts
+    action: review
+    required_approvals: 2
+    reason: big money out
+    match: { name: "pay.payout*" }
+  - id: urgent
+    action: review
+    approvers: [boss]
+    escalate_after_seconds: 60
+    escalate_to: [boss2]
+    reason: production change
+    match: { name: "prod.*" }
+"""
+
+
+@pytest.fixture()
+def quorum(rules):
+    rules.write_text(QUORUM, encoding="utf-8")
+    server.policy._maybe_reload()
+    return rules
+
+
+def test_two_people_must_approve_and_one_rejection_stops_it(c, quorum):
+    eid = post(c, "pay.payout", {"amount": 9000}, source=agent())["event_id"]
+    r = c.post(f"/v1/events/{eid}/approve", headers=BOSS, json={"note": "checked invoice"})
+    assert r.status_code == 200 and r.json()["decision"] == "review"           # one of two
+    assert c.post(f"/v1/events/{eid}/approve", headers=BOSS, json={}).status_code == 409   # not twice
+    e = c.get(f"/v1/events/{eid}", headers=BOSS).json()
+    assert [a["by"] for a in e["approvals"]] == ["boss"] and e["required_approvals"] == 2
+    r = c.post(f"/v1/events/{eid}/approve", headers=BOSS2, json={})
+    assert r.json()["decision"] == "allow" and r.json()["decided_by"] == "boss + boss2"
+    assert "boss: checked invoice" in r.json()["decision_note"]
+
+    eid = post(c, "pay.payout", {"amount": 9000}, source=agent())["event_id"]
+    c.post(f"/v1/events/{eid}/approve", headers=BOSS, json={})
+    r = c.post(f"/v1/events/{eid}/reject", headers=BOSS2, json={"note": "not this week"})
+    assert r.json()["decision"] == "deny"
+    acts = [x["action"] for x in c.get("/v1/audit/log", headers=BOSS, params={"limit": 50}).json()["entries"]
+            if x["target"] == eid]
+    assert "event.approval_added" in acts and "event.rejected" in acts
+
+
+def test_quorum_settings_are_checked(tmp_path):
+    p = tmp_path / "r.yaml"
+    p.write_text("rules:\n  - id: x\n    action: review\n    escalate_after_seconds: 30\n    match: {name: a}\n",
+                 encoding="utf-8")
+    pol = server.Policy(p)
+    pol._maybe_reload()
+    assert pol.rules == []                       # escalate without escalate_to: refused, the last good rules kept
+
+
+def test_escalation_lets_more_people_decide_and_tells_them(c, quorum, monkeypatch):
+    sent = []
+    monkeypatch.setattr(server, "notify_approval_needed", lambda row, escalated_to=None: sent.append(escalated_to))
+    eid = post(c, "prod.restart", {}, source=agent())["event_id"]
+    assert c.post(f"/v1/events/{eid}/approve", headers=BOSS2, json={}).status_code == 403   # not yet theirs
+    with server.engine.begin() as conn:
+        conn.execute(server.update(server.events).where(server.events.c.id == eid).values(
+            escalate_at=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")))
+    assert server.escalate_due() == 1 and server.escalate_due() == 0          # once
+    assert sent[-1] == ["boss2"]
+    assert c.post(f"/v1/events/{eid}/approve", headers=BOSS2, json={}).json()["decision"] == "allow"
+
+
+# ---- rules history: diff against today's, and putting a version back
+
+def test_rules_history_diff_and_restore(c, rules):
+    post(c, "Read", {}, source=agent())                       # a decision records this version
+    old_fp = server.policy.fingerprint
+    rules.write_text(RULES.replace("action: notify", "action: deny"), encoding="utf-8")
+    server.policy._maybe_reload()
+    post(c, "Read", {}, source=agent())
+    v = c.get("/v1/policy/versions", headers=BOSS).json()
+    assert v["current"] == server.policy.fingerprint and old_fp in [x["fingerprint"] for x in v["versions"]]
+    d = c.get(f"/v1/policy/versions/{old_fp}", headers=BOSS).json()
+    assert "-    action: notify" in d["diff_to_current"] and "+    action: deny" in d["diff_to_current"]
+    assert c.post(f"/v1/policy/versions/{old_fp}/restore", headers=H).status_code == 403    # admins only
+    r = c.post(f"/v1/policy/versions/{old_fp}/restore", headers=BOSS)
+    assert r.status_code == 200 and r.json()["ok"] and server.policy.fingerprint == old_fp
+    assert (rules.parent / r.json()["backup"]).read_text(encoding="utf-8").count("action: deny") >= 1
+    assert c.get("/v1/policy/versions/nope", headers=BOSS).status_code == 404

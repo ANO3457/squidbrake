@@ -139,7 +139,7 @@ def check_device_approvals(entries: list[dict], devices: dict[str, dict]) -> dic
     """Approvals made with a passkey: the device's signature over the approval challenge (WebAuthn assertion)."""
     checked, bad = 0, []
     for e in entries:
-        if e["action"] not in ("event.approved", "event.rejected"):
+        if e["action"] not in ("event.approved", "event.approval_added", "event.rejected"):
             continue
         proof = json.loads(e["detail"] or "{}").get("device_proof")
         if not proof:
@@ -154,7 +154,7 @@ def check_device_approvals(entries: list[dict], devices: dict[str, dict]) -> dic
                 cd = json.loads(client)
                 key = json.loads(dev["public_key"]) if isinstance(dev["public_key"], str) else dev["public_key"]
                 parts = str(proof.get("statement") or "").split("|")
-                wanted = "approve" if e["action"] == "event.approved" else "reject"
+                wanted = "reject" if e["action"] == "event.rejected" else "approve"
                 bound = (len(parts) == 4 and parts[1] == e["target"] and parts[2] == wanted and proof.get("challenge")
                          == base64.urlsafe_b64encode(hashlib.sha256(proof["statement"].encode()).digest()).decode().rstrip("="))
                 ok = (bound and cd.get("type") == "webauthn.get" and cd.get("challenge") == proof.get("challenge")

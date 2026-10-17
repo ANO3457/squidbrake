@@ -208,6 +208,15 @@ def _ids(text: str) -> set[str]:
     return set(re.findall(r"^\s*-\s*id:\s*([\w.-]+)\s*$", text, re.M))
 
 
+def replace_all(rules_path: Path, text: str) -> Path:
+    """Write `text` as the whole rules file (an earlier version put back), keeping a backup. Returns the backup."""
+    rules_path = Path(rules_path)
+    backup = rules_path.with_name(f"{rules_path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+    shutil.copy2(rules_path, backup)
+    rules_path.write_bytes(text.encode("utf-8"))       # bytes: the text is exactly what was fingerprinted
+    return backup
+
+
 def insert(rules_path: Path, block: str, before_id: str | None, loads) -> Path:
     """Add `block` (rule items, indented for `rules:`) to the rules file: right before rule `before_id` if given, else
     right after allow-reads (so reads still run, and block rules above stay first), else at the top of `rules:`.
