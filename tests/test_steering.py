@@ -64,7 +64,8 @@ def test_notify_rule_runs_and_tells_the_team_once(c, rules, monkeypatch):
     d = post(c, "crm.export_contacts", {"list": "all"}, source=who)
     assert d["decision"] == "allow" and d["rule_id"] == "tell-on-exports"
     post(c, "crm.export_contacts", {"list": "vip"}, source=who)
-    assert len(sent) == 1 and who in sent[0][0] and "only tells you" in sent[0][1]
+    mine = [m for m in sent if who in m[0]]      # other tests' background threads may notify too
+    assert len(mine) == 1 and "only tells you" in mine[0][1]
 
 
 def test_notify_is_a_valid_action_but_not_a_default(tmp_path):
