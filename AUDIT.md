@@ -26,7 +26,7 @@ xfail (AWS reach).
 | 4 Self-approval | **Fixed** (`selfguard.py`, `tests/test_approval_integrity.py`) |
 | 5 Self-modification | **Fixed** for the package, reinstalls, lasting variables and a gateway with auth off |
 | 3 Bypass | `ssh` / `docker exec` / `kubectl exec` are read now. A script the agent changed and then runs is flagged, and held with `edited_then_run: review`. The rest is in `THREAT_MODEL.md` |
-| 7 Latency | Recorded per action (`decision_ms`) and in `squidbrake report --week`. The hook's ~400 ms start-up is not fixed |
+| 7 Latency | Recorded per action (`decision_ms`) and in `squidbrake report --week`. The hook's ~400 ms start-up is not fixed. Measured 17 Oct: Python itself ~80 ms, importing httpx ~200 ms (the biggest part). sqlite3 now loads only when a command touches a SQLite file. Swapping httpx for the standard library would save ~120 ms but loses proxy support for remote gateways, so it isn't done |
 | 2 Chains | **Fixed** (Phase 4): a capabilities table per identity with expiry, used for `after:` chains, `scope: identity`, and outside content remembered across conversations (`tests/test_capabilities.py`) |
 | 6 AWS reach | Still open |
 | 8 False positives | `squidbrake feedback ID legit` gives real numbers once pilots use it. `bench/chains` still holds 3 of 41 routine steps |

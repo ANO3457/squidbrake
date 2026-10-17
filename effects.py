@@ -26,7 +26,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import tempfile
 import time
@@ -404,6 +403,7 @@ def _sql(cmd: commands.Command, cwd: str, deadline: float) -> list[str]:
         if not targets or not db.is_file():
             return []
         out = []
+        import sqlite3   # here, not at the top: every hook call loads this file, few touch a SQLite database
         con = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
         try:
             con.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 10000)
