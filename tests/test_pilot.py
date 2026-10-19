@@ -428,7 +428,7 @@ def test_signup_needs_a_work_email_and_gives_the_local_setup_page(insights):
     insights_app._requests.clear()
     sign = lambda email, **kw: insights.post("/v1/signup", json={"name": "Asha", "email": email, "company": "Acme",
                                                                  "agents": ["claude-code", "cursor"], **kw})
-    assert sign("asha@gmail.com").status_code == 422                       # work email only
+    assert "/start/" in sign("asha@gmail.com").json()["link"]                # any email, Gmail too
     assert sign("not-an-email").status_code == 422
     assert "link" not in sign("bot@acme.com", website="spam").json()      # a bot: thanked, nothing kept
     r = sign("asha@acme.com").json()
@@ -457,7 +457,7 @@ def test_with_supabase_only_a_verified_sign_in_signs_up_and_signing_in_again_giv
     assert post().status_code == 401                                         # not signed in
     assert post("forged").status_code == 401
     assert post("unconfirmed").status_code == 401
-    assert post("gmail").status_code == 422
+    assert "/start/" in post("gmail").json()["link"]                         # Gmail is fine
     first = post("good").json()["link"]
     insights_app._requests.clear()                                          # 5 an hour from one address
     assert post("good", {}).json()["link"] == first                          # back again: same page, no form needed
@@ -468,22 +468,32 @@ def test_with_supabase_only_a_verified_sign_in_signs_up_and_signing_in_again_giv
     assert '"supabase_url": "https://x.supabase.co"' in page and "__CONFIG__" not in page
 
 
-def test_signup_picks_hosted_or_local_and_hosted_waits_for_a_free_slot(insights, monkeypatch):
+def test_signup_hosted_waits_for_you_to_approve_it(insights, monkeypatch):
     import app as insights_app
     insights_app._requests.clear()
+    told = []
+    monkeypatch.setattr(insights_app, "notify", told.append)
     with insights_app.db() as c:
         live = c.execute(f"SELECT COUNT(*) FROM pilots WHERE {insights_app.LIVE}").fetchone()[0]
     monkeypatch.setattr(insights_app, "HOSTED_MAX", live + 1)
+    admin = {"X-Admin-Key": "admin-test-key"}
     sign = lambda email, setup: insights.post("/v1/signup", json={"name": "Mei", "email": email, "company": "Gamma",
                                                                   "agents": ["codex"], "setup": setup})
     r = sign("mei@gamma.io", "hosted").json()
+    code = r["link"].rsplit("/", 1)[1]
     page = insights.get(urlparse(r["link"]).path).text
-    assert '"hosted": true' in page and "gamma.app.example.com" in page and "Your checklist" in page
-    q = insights.get("/v1/admin/provision", headers={"X-Admin-Key": "admin-test-key"}).json()["pilots"]
-    assert any(p["code"] == r["link"].rsplit("/", 1)[1] and p["state"] == "requested" for p in q)   # provision.py starts it
-    full = sign("li@gamma.io", "hosted")                                    # no slot left: told, offered local
-    assert full.status_code == 409 and "On my computer" in full.json()["detail"]
-    assert '"hosted": false' in insights.get(urlparse(sign("li@gamma.io", "local").json()["link"]).path).text
+    assert '"hosted": true' in page and '"state": "waiting"' in page and "Your checklist" in page
+    assert len(told) == 1 and "mei@gamma.io" in told[0]                       # you hear about it
+    q = insights.get("/v1/admin/provision", headers=admin).json()["pilots"]
+    assert any(p["code"] == code and p["state"] == "waiting" for p in q)     # provision.py doesn't start it
+    other = sign("li@gamma.io", "hosted").json()["link"].rsplit("/", 1)[1]   # a second request waits too
+    assert insights.post(f"/v1/admin/pilots/{code}/approve").status_code == 401
+    assert insights.post(f"/v1/admin/pilots/{code}/approve", headers=admin).status_code == 200
+    assert insights.get(f"/v1/pilot/{code}/status").json()["state"] == "requested"   # now provision.py starts it
+    assert insights.post(f"/v1/admin/pilots/{code}/approve", headers=admin).status_code == 404
+    assert insights.post(f"/v1/admin/pilots/{other}/approve", headers=admin).status_code == 409   # no slot left
+    assert '"hosted": false' in insights.get(urlparse(sign("wu@gamma.io", "local").json()["link"]).path).text
+    assert len(told) == 2                                                     # local sign-ups don't ping you
     assert sign("x@gamma.io", "cloud").status_code == 422
 
 

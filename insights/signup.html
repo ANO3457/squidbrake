@@ -148,7 +148,7 @@ footer a { color:var(--muted); }
     <div class="links">
       <a href="/pricing">Pricing</a>
       <a href="/docs">Docs</a>
-      <a href="https://github.com/batrapulkit/squidbrake">GitHub</a>
+      
       <a class="cta" href="/team">For teams</a>
     </div>
   </nav>
@@ -180,13 +180,13 @@ footer a { color:var(--muted); }
 
     <section class="card" id="card">
       <div class="k">Squidbrake Console</div>
-      <h2>Get your setup line</h2>
-      <p class="sub">Tell us a little about you. We'll email you a sign-in link, then give you the one line that sets
-        Squidbrake up on your computer.</p>
+      <h2>Sign up free</h2>
+      <p class="sub">Tell us a little about you, then pick where it runs: on your
+        computer, or on our server with a dashboard for your team.</p>
       <form id="f" novalidate>
         <label>Your name<input type="text" name="name" required maxlength="80" autocomplete="name"></label>
         <label>Company<input type="text" name="company" required maxlength="80" autocomplete="organization"></label>
-        <label class="full">Work email<input type="email" name="email" required maxlength="200" autocomplete="email"></label>
+        <label class="full">Email<input type="email" name="email" required maxlength="200" autocomplete="email"></label>
         <fieldset class="full"><legend>Agents you use</legend>
           <div class="chips">
             <label><input type="checkbox" name="agents" value="claude-code"><span>claude-code</span></label>
@@ -202,18 +202,18 @@ footer a { color:var(--muted); }
         <p class="err full" id="err" role="alert" hidden></p>
         <button type="submit" class="go" id="go">Sign up free</button>
       </form>
-      <p class="fine">Already signed up? Fill in the same email: the link takes you back to your setup line.<br>
+      <p class="fine">Already signed up? Use the setup link from last time, or write to hello@squidbrake.com.<br>
         We see your name, email, the agents you picked, and for each action that was blocked or sent for approval:
         the program (e.g. <span class="mono">rm</span>), the rule and what happened. Never your commands, files or prompts.</p>
     </section>
   </div>
 
   <div class="steps">
-    <div><span class="n">01</span><h3>Sign in with your email</h3><p>One link, no password. It proves the address is yours.</p></div>
+    <div><span class="n">01</span><h3>Tell us who you are</h3><p>Name, company, email. No password, no card.</p></div>
     <div><span class="n">02</span><h3>Pick where it runs</h3><p>On your computer (one line, Windows or Mac), or on our server with a dashboard for your team.</p></div>
     <div><span class="n">03</span><h3>Work as usual</h3><p>Approve the risky steps from the dashboard, your phone or Slack.</p></div>
   </div>
-  <footer><span>© Squidbrake · on your computer or ours</span><span><a href="/security">Security</a> · <a href="https://github.com/batrapulkit/squidbrake">Open source</a></span></footer>
+  <footer><span>© Squidbrake · on your computer or ours</span><span><a href="/security">Security</a> · Open source</span></footer>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -368,8 +368,6 @@ let brakeFlash = () => {};
 })();
 
 // ---------------------------------------------------------------- sign-up
-const FREE_MAIL = ["gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com", "icloud.com",
-                   "aol.com", "proton.me", "protonmail.com", "gmx.com", "yandex.com", "mail.com", "rediffmail.com"];
 const card = document.getElementById("card"), f = document.getElementById("f"), err = document.getElementById("err"),
       go = document.getElementById("go");
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -387,7 +385,7 @@ function choose(body, token) {
       <button type="button" data-setup="local"><b>On my computer</b><span>One line installs it. Everything your agents
         do stays on your machine. Best for one person.</span></button>
       <button type="button" data-setup="hosted"><b>On our server (hosted)</b><span>We run your gateway and dashboard at your
-        own address, so your team approves from anywhere. Your agents connect to it.</span></button>
+        own address, so your team approves from anywhere. We set it up for you, usually within a day.</span></button>
     </div>`);
   card.querySelectorAll("[data-setup]").forEach((b) => b.addEventListener("click", () =>
     finish({ ...body, setup: b.dataset.setup }, token)));
@@ -402,11 +400,6 @@ async function finish(body, token) {
   if (r.ok) { state(`<div class="big">✓</div><h2>Thanks!</h2><p>We'll be in touch.</p>`); return; }
   state(`<div class="big">!</div><h2>That didn't work</h2><p>${esc(typeof j.detail === "string" ? j.detail : "Please try again.")}</p>
          <p><a href="/signup">Start again</a></p>`);
-  if (r.status === 409 && body.setup === "hosted") {     // hosted is full: the same thing on their computer
-    card.querySelector(".state").insertAdjacentHTML("beforeend",
-      `<p><button type="button" class="go" id="local">Set it up on my computer instead</button></p>`);
-    document.getElementById("local").addEventListener("click", () => finish({ ...body, setup: "local" }, token));
-  }
 }
 
 f.addEventListener("submit", async (e) => {
@@ -417,7 +410,6 @@ f.addEventListener("submit", async (e) => {
                  company: (d.get("company") || "").trim(), agents: d.getAll("agents"), website: d.get("website") || "" };
   if (!body.name || !body.company) return fail("Please add your name and company.");
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(body.email)) return fail("That email address doesn't look right.");
-  if (FREE_MAIL.includes(body.email.split("@")[1])) return fail("Please use your work email.");
   go.disabled = true; go.textContent = "One moment…";
   try {
     if (!sb) return choose(body);
