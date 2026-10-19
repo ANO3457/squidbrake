@@ -3,84 +3,292 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Squidbrake free</title>
+<title>Squidbrake Console</title>
+<meta name="description" content="Set up Squidbrake in 3 minutes, free: every action your coding agents take is checked before it runs.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
-:root { --bg:#fafaf9; --card:#fff; --ink:#18181b; --muted:#71717a; --line:#e4e4e7; --accent:#dc2626; }
-@media (prefers-color-scheme: dark) { :root { --bg:#111114; --card:#1a1a1f; --ink:#f4f4f5; --muted:#a1a1aa; --line:#2e2e35;
-        --accent:#ef4444; } }
+:root { --bg:#07070a; --ink:#f4f4f5; --muted:#a1a1aa; --dim:#71717a; --line:rgba(255,255,255,.10);
+        --glass:rgba(18,18,24,.62); --field:rgba(255,255,255,.04); --accent:#ef4444; --accent2:#f97316; --ok:#22c55e; }
 * { box-sizing:border-box; }
-body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
-main { max-width:620px; margin:0 auto; padding:40px 16px 64px; }
-.brand { font-weight:800; font-size:20px; } .brand span { color:var(--accent); }
-h1 { font-size:32px; line-height:1.2; margin:18px 0 8px; letter-spacing:-.02em; }
-.lead { color:var(--muted); margin:0 0 22px; font-size:17px; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; }
-form { display:grid; grid-template-columns:1fr 1fr; gap:12px 14px; }
-label { display:flex; flex-direction:column; gap:4px; font-size:14px; font-weight:600; }
-fieldset { border:0; padding:0; margin:0; } legend { font-size:14px; font-weight:600; margin-bottom:6px; }
-.checks { display:flex; flex-wrap:wrap; gap:6px 16px; font-weight:400; }
-.checks label { flex-direction:row; align-items:center; gap:6px; font-weight:400; }
+html, body { margin:0; background:var(--bg); color:var(--ink); }
+body { font:16px/1.55 Inter,system-ui,-apple-system,"Segoe UI",sans-serif; min-height:100vh; overflow-x:hidden; }
+#scene { position:fixed; inset:0; width:100%; height:100%; display:block; z-index:0; }
+.veil { position:fixed; inset:0; z-index:1; pointer-events:none;
+        background:radial-gradient(ellipse at 20% 40%, rgba(7,7,10,.15), rgba(7,7,10,.75) 70%),
+                   linear-gradient(180deg, rgba(7,7,10,0) 60%, rgba(7,7,10,.9)); }
+.wrap { position:relative; z-index:2; max-width:1180px; margin:0 auto; padding:28px 16px 48px;
+        min-height:100vh; display:flex; flex-direction:column; }
+nav { display:flex; align-items:center; justify-content:space-between; }
+.brand { font-weight:800; font-size:20px; letter-spacing:-.02em; color:var(--ink); text-decoration:none; }
+.brand span { color:var(--accent); }
+nav a.small { color:var(--muted); text-decoration:none; font-size:14px; }
+nav a.small:hover { color:var(--ink); }
+.grid { flex:1; display:grid; grid-template-columns:1.1fr .9fr; gap:56px; align-items:center; padding:40px 0; }
+.pill { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); background:rgba(255,255,255,.03);
+        border-radius:999px; padding:5px 12px 5px 8px; font-size:13px; color:var(--muted); }
+.pill i { width:8px; height:8px; border-radius:50%; background:var(--ok); box-shadow:0 0 12px var(--ok); }
+h1 { font-size:clamp(36px, 5.2vw, 62px); line-height:1.04; letter-spacing:-.035em; margin:18px 0 18px; font-weight:800; }
+h1 em { font-style:normal; background:linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip:text;
+        background-clip:text; color:transparent; }
+.lead { color:var(--muted); font-size:18px; max-width:520px; margin:0 0 26px; }
+.legend { display:flex; flex-wrap:wrap; gap:10px 22px; font-size:14px; color:var(--muted); }
+.legend span { display:inline-flex; align-items:center; gap:8px; }
+.dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+.card { background:var(--glass); border:1px solid var(--line); border-radius:20px; padding:26px;
+        backdrop-filter:blur(18px) saturate(140%); -webkit-backdrop-filter:blur(18px) saturate(140%);
+        box-shadow:0 30px 80px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06); }
+.card h2 { margin:0 0 4px; font-size:21px; letter-spacing:-.01em; }
+.card .sub { margin:0 0 20px; color:var(--muted); font-size:14px; }
+form { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .full { grid-column:1 / -1; }
-input[type=text], input[type=email] { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line);
-        border-radius:9px; padding:9px 11px; width:100%; }
-button { font:inherit; font-weight:600; border:0; border-radius:10px; padding:11px 18px; background:var(--ink); color:var(--bg);
-         cursor:pointer; justify-self:start; }
-button:disabled { opacity:.6; cursor:default; }
+label { display:flex; flex-direction:column; gap:6px; font-size:13px; font-weight:600; color:#d4d4d8; }
+input[type=text], input[type=email] { font:inherit; font-weight:400; color:var(--ink); background:var(--field);
+        border:1px solid var(--line); border-radius:11px; padding:11px 13px; width:100%; outline:none;
+        transition:border-color .15s, background .15s; }
+input[type=text]:focus, input[type=email]:focus { border-color:rgba(239,68,68,.7); background:rgba(255,255,255,.06); }
+fieldset { border:0; padding:0; margin:0; }
+legend { font-size:13px; font-weight:600; color:#d4d4d8; margin-bottom:8px; }
+.chips { display:flex; flex-wrap:wrap; gap:8px; }
+.chips label { position:relative; font-weight:500; font-size:13px; }
+.chips input { position:absolute; opacity:0; inset:0; margin:0; cursor:pointer; }
+.chips span { display:inline-block; border:1px solid var(--line); background:var(--field); border-radius:999px;
+              padding:7px 12px; color:var(--muted); transition:all .15s; cursor:pointer; }
+.chips input:checked + span { border-color:rgba(239,68,68,.75); color:var(--ink); background:rgba(239,68,68,.14); }
+.chips input:focus-visible + span { outline:2px solid var(--accent); outline-offset:2px; }
+button.go { grid-column:1 / -1; font:inherit; font-weight:700; border:0; border-radius:12px; padding:13px 18px; margin-top:6px;
+            color:#fff; cursor:pointer; background:linear-gradient(90deg, var(--accent), var(--accent2));
+            box-shadow:0 10px 30px rgba(239,68,68,.35); transition:transform .12s, box-shadow .12s, opacity .12s; }
+button.go:hover { transform:translateY(-1px); box-shadow:0 14px 36px rgba(239,68,68,.45); }
+button.go:disabled { opacity:.6; cursor:default; transform:none; }
 .hp { position:absolute; left:-10000px; width:1px; height:1px; overflow:hidden; }
-.err { color:var(--accent); font-size:14px; margin:0; }
-.foot { color:var(--muted); font-size:14px; margin-top:18px; }
-a { color:var(--accent); }
-@media (max-width:560px) { form { grid-template-columns:1fr; } h1 { font-size:26px; } }
+.err { color:#fca5a5; font-size:14px; margin:0; }
+.fine { color:var(--dim); font-size:12.5px; margin:16px 0 0; }
+.fine a, .state a { color:#fca5a5; }
+.state { text-align:center; padding:12px 4px; }
+.state .big { font-size:42px; line-height:1; margin-bottom:12px; }
+.state h2 { margin:0 0 8px; }
+.state p { color:var(--muted); margin:0 0 6px; }
+.mono { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:13px; color:var(--ink); }
+.spin { width:28px; height:28px; border-radius:50%; border:3px solid rgba(255,255,255,.15); border-top-color:var(--accent);
+        animation:spin .8s linear infinite; margin:6px auto 14px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+footer { color:var(--dim); font-size:13px; display:flex; gap:18px; flex-wrap:wrap; }
+@media (max-width:900px) { .grid { grid-template-columns:1fr; gap:28px; padding:24px 0; } .lead { font-size:17px; } }
+@media (max-width:520px) { form { grid-template-columns:1fr; } .card { padding:20px; } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration:3s; } }
 </style>
 </head>
 <body>
-<main>
-  <div class="brand">Squid<span>brake</span></div>
-  <h1>Set up Squidbrake in 3 minutes, free</h1>
-  <p class="lead">Squidbrake checks every action your coding agents take before it runs: dangerous ones are blocked, risky
-    ones wait for your OK. Tell us a little about you, and we'll give you the one line that sets it up on your computer.</p>
-  <div class="card">
-    <form id="f">
-      <label>Your name<input type="text" name="name" required maxlength="80" autocomplete="name"></label>
-      <label>Work email<input type="email" name="email" required maxlength="200" autocomplete="email"></label>
-      <label class="full">Company<input type="text" name="company" required maxlength="80" autocomplete="organization"></label>
-      <fieldset class="full"><legend>Agents you use</legend>
-        <div class="checks">
-          <label><input type="checkbox" name="agents" value="claude-code"> Claude Code</label>
-          <label><input type="checkbox" name="agents" value="cursor"> Cursor</label>
-          <label><input type="checkbox" name="agents" value="codex"> Codex</label>
-          <label><input type="checkbox" name="agents" value="copilot"> Copilot</label>
-          <label><input type="checkbox" name="agents" value="gemini-cli"> Gemini CLI</label>
-          <label><input type="checkbox" name="agents" value="antigravity"> Antigravity</label>
-          <label><input type="checkbox" name="agents" value="other"> Other</label>
-        </div>
-      </fieldset>
-      <div class="hp" aria-hidden="true"><label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
-      <p class="err full" id="err" role="alert" hidden></p>
-      <button type="submit" id="go">Get my setup line</button>
-    </form>
+<canvas id="scene" aria-hidden="true"></canvas>
+<div class="veil"></div>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="https://squidbrake.com">Squid<span>brake</span></a>
+    <a class="small" href="https://squidbrake.com">squidbrake.com ↗</a>
+  </nav>
+  <div class="grid">
+    <section>
+      <div class="pill"><i></i> Free · runs on your computer · 3 minutes</div>
+      <h1>Your agents move fast.<br><em>Squidbrake</em> catches what they shouldn't do.</h1>
+      <p class="lead">Every action your coding agent takes is checked before it runs. Safe ones pass, risky ones wait for
+        your OK, and dangerous ones (wiping a folder, printing your <span class="mono">.env</span>, dropping a table) are stopped.</p>
+      <div class="legend">
+        <span><i class="dot" style="background:#e4e4e7"></i> allowed</span>
+        <span><i class="dot" style="background:#f97316"></i> waits for you</span>
+        <span><i class="dot" style="background:#ef4444"></i> blocked</span>
+      </div>
+    </section>
+    <section class="card" id="card">
+      <h2>Get your setup line</h2>
+      <p class="sub">Tell us a little about you. We'll give you one line that sets Squidbrake up on your computer.</p>
+      <form id="f" novalidate>
+        <label>Your name<input type="text" name="name" required maxlength="80" autocomplete="name"></label>
+        <label>Company<input type="text" name="company" required maxlength="80" autocomplete="organization"></label>
+        <label class="full">Work email<input type="email" name="email" required maxlength="200" autocomplete="email"></label>
+        <fieldset class="full"><legend>Agents you use</legend>
+          <div class="chips">
+            <label><input type="checkbox" name="agents" value="claude-code"><span>Claude Code</span></label>
+            <label><input type="checkbox" name="agents" value="cursor"><span>Cursor</span></label>
+            <label><input type="checkbox" name="agents" value="codex"><span>Codex</span></label>
+            <label><input type="checkbox" name="agents" value="copilot"><span>Copilot</span></label>
+            <label><input type="checkbox" name="agents" value="gemini-cli"><span>Gemini CLI</span></label>
+            <label><input type="checkbox" name="agents" value="antigravity"><span>Antigravity</span></label>
+            <label><input type="checkbox" name="agents" value="other"><span>Other</span></label>
+          </div>
+        </fieldset>
+        <div class="hp" aria-hidden="true"><label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+        <p class="err full" id="err" role="alert" hidden></p>
+        <button type="submit" class="go" id="go">Get my setup line</button>
+      </form>
+      <p class="fine">We see your name, email, the agents you picked, and for each action that was blocked or sent for
+        approval: the program (e.g. "rm"), the rule and what happened. Never your commands, files or prompts.
+        For a team? <a href="/team">Tell us</a>.</p>
+    </section>
   </div>
-  <p class="foot">It runs on your computer. We see your name, email, the agents you picked, and for each action that was
-    blocked or sent for approval: the program (e.g. "rm"), the rule and what happened. Never your commands, files or
-    prompts. Need it for a team? <a href="/team">Tell us</a>.</p>
-</main>
+  <footer><span>© Squidbrake</span><a class="small" style="color:inherit" href="https://github.com/batrapulkit/squidbrake">Open source</a></footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
-const f = document.getElementById("f"), err = document.getElementById("err"), go = document.getElementById("go");
+const CONFIG = __CONFIG__;   // filled in by the server: { supabase_url, supabase_key } (both empty = no email sign-in)
+
+// ---------------------------------------------------------------- the scene: a stream of agent actions, and the brake
+(function scene() {
+  if (!window.THREE) return;
+  const canvas = document.getElementById("scene");
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false }); } catch { return; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x07070a, 1);
+  const world = new THREE.Scene();
+  world.fog = new THREE.Fog(0x07070a, 9, 26);
+  const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
+  camera.position.set(-2.2, 1.6, 11);
+
+  const N = window.innerWidth < 700 ? 260 : 520, BRAKE_X = 0.6, R = 3.1;
+  const WHITE = new THREE.Color(0xe4e4e7), AMBER = new THREE.Color(0xf97316), RED = new THREE.Color(0xef4444);
+  const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.055, 10, 10),
+                                       new THREE.MeshBasicMaterial({ color: 0xffffff }), N);
+  world.add(mesh);
+  const P = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3();
+  const spawn = (p, anywhere) => {
+    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * R;
+    const roll = Math.random();
+    Object.assign(p, { x: anywhere ? -13 + Math.random() * 26 : -13 - Math.random() * 4, y: Math.sin(a) * r, z: Math.cos(a) * r,
+      speed: 2.2 + Math.random() * 2.4, kind: roll < 0.07 ? "block" : roll < 0.14 ? "hold" : "pass", t: 0, size: 1,
+      phase: Math.random() * 6.28 });
+    if (anywhere && p.kind !== "pass" && p.x > BRAKE_X) p.x = -13 + Math.random() * 12;
+  };
+  for (let i = 0; i < N; i++) { const p = {}; spawn(p, true); P.push(p); mesh.setColorAt(i, p.kind === "pass" ? WHITE : p.kind === "hold" ? AMBER : RED); }
+
+  // the brake: a ring the stream passes through, and a faint disc that flashes when something is stopped
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 0.35, 0.035, 12, 120),
+                              new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.9 }));
+  ring.rotation.y = Math.PI / 2; ring.position.x = BRAKE_X; world.add(ring);
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(R + 0.35, 0.16, 12, 120),
+                              new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.08 }));
+  halo.rotation.y = Math.PI / 2; halo.position.x = BRAKE_X; world.add(halo);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(R + 0.3, 64),
+                              new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.03, side: THREE.DoubleSide }));
+  disc.rotation.y = Math.PI / 2; disc.position.x = BRAKE_X; world.add(disc);
+  // faint guide lines along the stream, for depth
+  const lines = new THREE.Group();
+  for (let i = 0; i < 18; i++) {
+    const a = (i / 18) * Math.PI * 2;
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-14, Math.sin(a) * (R + 0.35), Math.cos(a) * (R + 0.35)),
+                                                       new THREE.Vector3(14, Math.sin(a) * (R + 0.35), Math.cos(a) * (R + 0.35))]);
+    lines.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.035 })));
+  }
+  world.add(lines);
+
+  let flash = 0, mx = 0, my = 0;
+  addEventListener("pointermove", (e) => { mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5; });
+  const resize = () => {
+    renderer.setSize(innerWidth, innerHeight, false);
+    camera.aspect = innerWidth / innerHeight;
+    camera.position.x = innerWidth < 900 ? -4.5 : -2.2;    // seen at an angle, so the brake reads as a ring, not a line
+    camera.updateProjectionMatrix();
+  };
+  addEventListener("resize", resize); resize();
+
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let last = performance.now(), running = true;
+  const step = (now) => {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    for (let i = 0; i < N; i++) {
+      const p = P[i];
+      if (p.kind !== "pass" && p.x >= BRAKE_X - 0.12) {
+        // stopped at the brake: a block fades out, a hold waits, then is let through
+        if (p.t === 0) flash = Math.min(1, flash + (p.kind === "block" ? 0.55 : 0.3));
+        p.t += dt; p.x = BRAKE_X - 0.12;
+        if (p.kind === "block") { p.size = Math.max(0, 1.6 - p.t * 0.9); if (p.t > 1.8) spawn(p); }
+        else { p.size = 1.25 + Math.sin(p.t * 9) * 0.25; if (p.t > 1.6) { p.kind = "pass"; p.size = 1; p.x = BRAKE_X + 0.05;
+                 mesh.setColorAt(i, WHITE); mesh.instanceColor.needsUpdate = true; } }
+      } else {
+        p.x += p.speed * dt;
+        if (p.x > 14) { spawn(p); mesh.setColorAt(i, p.kind === "pass" ? WHITE : p.kind === "hold" ? AMBER : RED); mesh.instanceColor.needsUpdate = true; }
+      }
+      const wob = Math.sin(now / 900 + p.phase) * 0.06;
+      v.set(p.x, p.y + wob, p.z); s.setScalar(p.size);
+      m.compose(v, q, s); mesh.setMatrixAt(i, m);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    flash *= 0.94;
+    disc.material.opacity = 0.03 + flash * 0.12; halo.material.opacity = 0.08 + flash * 0.3;
+    ring.material.opacity = 0.75 + flash * 0.25;
+    lines.rotation.x += dt * 0.03;
+    camera.position.y += ((1.6 - my * 1.2) - camera.position.y) * 0.04;
+    camera.lookAt(BRAKE_X + mx * 1.5, 0, 0);
+    renderer.render(world, camera);
+  };
+  const loop = (now) => { if (!running) return; step(now); requestAnimationFrame(loop); };
+  if (still) { for (let k = 0; k < 90; k++) step(last + 16 * k); }
+  else requestAnimationFrame(loop);
+  document.addEventListener("visibilitychange", () => {
+    if (still) return;
+    running = !document.hidden;
+    if (running) { last = performance.now(); requestAnimationFrame(loop); }
+  });
+})();
+
+// ---------------------------------------------------------------- sign-up
+const FREE_MAIL = ["gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com", "icloud.com",
+                   "aol.com", "proton.me", "protonmail.com", "gmx.com", "yandex.com", "mail.com", "rediffmail.com"];
+const card = document.getElementById("card"), f = document.getElementById("f"), err = document.getElementById("err"),
+      go = document.getElementById("go");
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const sb = CONFIG.supabase_url && window.supabase
+  ? window.supabase.createClient(CONFIG.supabase_url, CONFIG.supabase_key, { auth: { flowType: "implicit", persistSession: true } })
+  : null;
+
+const fail = (msg) => { err.textContent = msg; err.hidden = false; go.disabled = false; go.textContent = "Get my setup line"; };
+const state = (html) => { card.innerHTML = `<div class="state">${html}</div>`; };
+
+async function finish(body, token) {
+  state(`<div class="spin"></div><h2>Setting you up…</h2><p>One moment.</p>`);
+  const r = await fetch("/v1/signup", { method: "POST", body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+  const j = await r.json().catch(() => ({}));
+  if (r.ok && j.link) { location.href = j.link; return; }
+  if (r.ok) { state(`<div class="big">✓</div><h2>Thanks!</h2><p>We'll be in touch.</p>`); return; }
+  state(`<div class="big">!</div><h2>That didn't work</h2><p>${esc(typeof j.detail === "string" ? j.detail : "Please try again.")}</p>
+         <p><a href="/signup">Start again</a></p>`);
+}
+
 f.addEventListener("submit", async (e) => {
   e.preventDefault();
-  err.hidden = true; go.disabled = true; go.textContent = "Creating…";
+  err.hidden = true;
   const d = new FormData(f);
-  const body = { name: d.get("name"), email: d.get("email"), company: d.get("company"), agents: d.getAll("agents"),
-                 website: d.get("website") };
+  const body = { name: (d.get("name") || "").trim(), email: (d.get("email") || "").trim().toLowerCase(),
+                 company: (d.get("company") || "").trim(), agents: d.getAll("agents"), website: d.get("website") || "" };
+  if (!body.name || !body.company) return fail("Please add your name and company.");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(body.email)) return fail("That email address doesn't look right.");
+  if (FREE_MAIL.includes(body.email.split("@")[1])) return fail("Please use your work email.");
+  go.disabled = true; go.textContent = "One moment…";
   try {
-    const r = await fetch("/v1/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "Please check the form and try again.");
-    if (j.link) location.href = j.link;
-    else { f.parentElement.innerHTML = "<p>Thanks! We'll be in touch.</p>"; }
-  } catch (x) {
-    err.textContent = x.message; err.hidden = false; go.disabled = false; go.textContent = "Get my setup line";
-  }
+    if (!sb) return await finish(body);
+    if (body.website) return state(`<div class="big">✓</div><h2>Thanks!</h2>`);   // a bot
+    const { error } = await sb.auth.signInWithOtp({ email: body.email, options: {
+      emailRedirectTo: location.origin + "/signup",
+      data: { name: body.name, company: body.company, agents: body.agents } } });
+    if (error) return fail(error.message || "Couldn't send the email. Please try again.");
+    state(`<div class="big">✉</div><h2>Check your inbox</h2>
+           <p>We sent a sign-in link to <span class="mono">${esc(body.email)}</span>.</p>
+           <p>Open it on this computer, and you'll go straight to your setup line.</p>
+           <p style="margin-top:14px;font-size:13px">Nothing there? Check spam, or <a href="/signup">try again</a>.</p>`);
+  } catch (x) { fail("Couldn't reach Squidbrake. Please try again."); }
+});
+
+// back from the email link: signed in, so finish the sign-up with what they told us the first time
+if (sb) sb.auth.getSession().then(({ data }) => {
+  const sess = data && data.session;
+  if (!sess) return;
+  const meta = sess.user.user_metadata || {};
+  finish({ name: meta.name || "", company: meta.company || "", email: sess.user.email,
+           agents: Array.isArray(meta.agents) ? meta.agents : [] }, sess.access_token);
 });
 </script>
 </body>

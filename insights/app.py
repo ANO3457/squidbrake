@@ -22,6 +22,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -942,10 +943,27 @@ def team_request(t: TeamRequestIn, request: Request):
     return {"ok": True}
 
 
+# Sign-in by email link (Supabase Auth), so a sign-up's email is really theirs and they can sign in again for their
+# link. Both empty: the form signs people up straight away, on the email they typed.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")      # the public (anon / publishable) key, never the service one
+
+
+def supabase_user(token: str) -> dict | None:
+    """The signed-in Supabase user for an access token, or None (bad, expired, or Supabase unreachable)."""
+    req = urllib.request.Request(SUPABASE_URL + "/auth/v1/user",
+                                 headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
 class SignupIn(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
-    email: str = Field(max_length=200)
-    company: str = Field(min_length=1, max_length=80)
+    name: str = Field(default="", max_length=80)
+    email: str = Field(default="", max_length=200)
+    company: str = Field(default="", max_length=80)
     agents: list[str] = Field(default_factory=list, max_length=12)
     website: str = Field(default="", max_length=200)   # a field people don't see: bots fill it in
 
@@ -955,7 +973,7 @@ FREE_MAIL = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook
 
 
 @app.post("/v1/signup")
-def signup(s: SignupIn, request: Request):
+def signup(s: SignupIn, request: Request, authorization: str = Header(default="")):
     """The public sign-up: a pilot code whose start page has the local install line. The install joins with it, so
     its counts and what was held or blocked (program and rule only, see pilot.py) reach the admin page."""
     ip = request.client.host if request.client else ""
@@ -963,19 +981,29 @@ def signup(s: SignupIn, request: Request):
     if len(recent) >= 5:
         raise HTTPException(429, "too many sign-ups from here: try again in an hour")
     _requests[ip] = recent + [time.time()]
+    if s.website:                                       # a bot: say thanks, keep nothing
+        return {"ok": True}
     email = s.email.strip().lower()
+    if SUPABASE_URL:
+        user = supabase_user(authorization.removeprefix("Bearer ").strip()) if authorization.startswith("Bearer ") else None
+        if not user or not user.get("email") or not user.get("email_confirmed_at"):
+            raise HTTPException(401, "please sign in with the link we emailed you")
+        email = user["email"].strip().lower()           # the verified address, not what the page says
     if not EMAIL_RE.match(email):
         raise HTTPException(422, "that email address doesn't look right")
     if email.rsplit("@", 1)[1] in FREE_MAIL:
         raise HTTPException(422, "please use your work email")
-    if s.website:                                       # a bot: say thanks, keep nothing
-        return {"ok": True}
     agents = [a.strip().lower()[:30] for a in s.agents if a.strip()]
     slug = re.sub(r"[^a-z0-9]+", "-", s.company.lower()).strip("-")[:20].strip("-") or "team"
     code = f"{slug}-{secrets.token_hex(6)}"
     with _lock, db() as c:
-        if c.execute("SELECT 1 FROM pilots WHERE lower(email)=?", (email,)).fetchone():
+        had = c.execute("SELECT code FROM pilots WHERE lower(email)=?", (email,)).fetchone()
+        if had and SUPABASE_URL:                        # signed in again: the same setup page as before
+            return {"ok": True, "link": f"{public_url(request)}/start/{had['code']}"}
+        if had:
             raise HTTPException(409, "this email already signed up: use the link you got, or write to us")
+        if not s.name.strip() or not s.company.strip():
+            raise HTTPException(422, "please add your name and company")
         c.execute("INSERT INTO pilots (code, company, contact, note, created_at, email, uses_agents) VALUES (?,?,?,?,?,?,?)",
                   (code, s.company.strip(), f"{s.name.strip()} · {email}", "signup · agents: " + (", ".join(agents) or "-"),
                    now(), email, json.dumps(agents)))
@@ -984,7 +1012,8 @@ def signup(s: SignupIn, request: Request):
 
 @app.get("/signup", response_class=HTMLResponse)
 def signup_page():
-    return HTMLResponse(PAGE("signup.html"))
+    config = {"supabase_url": SUPABASE_URL, "supabase_key": SUPABASE_ANON_KEY}
+    return HTMLResponse(PAGE("signup.html").replace("__CONFIG__", json.dumps(config).replace("</", "<\\/")))
 
 
 @app.get("/v1/admin/team-requests", dependencies=[Depends(admin)])

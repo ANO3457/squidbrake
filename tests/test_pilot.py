@@ -440,3 +440,28 @@ def test_signup_needs_a_work_email_and_gives_the_local_setup_page(insights):
     assert p["email"] == "asha@acme.com" and json.loads(p["uses_agents"]) == ["claude-code", "cursor"]
     assert "Asha" in p["contact"] and not p["hosted"]
     assert "bot@acme.com" not in json.dumps(insights.get("/v1/admin/overview", headers=admin).json())
+
+
+def test_with_supabase_only_a_verified_sign_in_signs_up_and_signing_in_again_gives_the_same_page(insights, monkeypatch):
+    import app as insights_app
+    insights_app._requests.clear()
+    monkeypatch.setattr(insights_app, "SUPABASE_URL", "https://x.supabase.co")
+    users = {"good": {"email": "Ravi@Beta.io", "email_confirmed_at": "2026-10-19T10:00:00Z"},
+             "unconfirmed": {"email": "ravi@beta.io", "email_confirmed_at": None},
+             "gmail": {"email": "ravi@gmail.com", "email_confirmed_at": "2026-10-19T10:00:00Z"}}
+    monkeypatch.setattr(insights_app, "supabase_user", lambda token: users.get(token))
+    body = {"name": "Ravi", "company": "Beta", "email": "someone-else@acme.com", "agents": ["codex"]}
+    post = lambda token=None, b=body: insights.post("/v1/signup", json=b,
+                                                    headers={"Authorization": f"Bearer {token}"} if token else {})
+    assert post().status_code == 401                                         # not signed in
+    assert post("forged").status_code == 401
+    assert post("unconfirmed").status_code == 401
+    assert post("gmail").status_code == 422
+    first = post("good").json()["link"]
+    insights_app._requests.clear()                                          # 5 an hour from one address
+    assert post("good", {}).json()["link"] == first                          # back again: same page, no form needed
+    p = next(p for p in insights.get("/v1/admin/overview", headers={"X-Admin-Key": "admin-test-key"}).json()["pilots"]
+             if p.get("email") == "ravi@beta.io")                            # the verified email, not the typed one
+    assert "someone-else" not in p["contact"]
+    page = insights.get("/signup").text
+    assert '"supabase_url": "https://x.supabase.co"' in page and "__CONFIG__" not in page
