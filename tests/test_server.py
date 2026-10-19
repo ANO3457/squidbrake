@@ -389,7 +389,8 @@ def test_me(c):
     assert me.pop("version") == server.VERSION and "latest" in me and me.pop("latest") in (None, me.get("latest"))
     assert me == {"client": "boss", "can_approve": True, "auth_enabled": True,
                   "kind": "person", "roles": ["admin"], "is_admin": True, "is_owner": True, "access": "admin",
-                  "mode": "enforce", "shadow_agents": []}
+                  "mode": "enforce", "shadow_agents": [], "plan": None, "trial_ends": None, "trial_over": False,
+                  "upgrade_url": server.UPGRADE_URL}
 
 
 
@@ -1087,6 +1088,22 @@ def test_team_admin_api(c, org):
     assert c.get("/v1/me", headers=bob).status_code == 401  # revoked immediately
     names = {m["name"]: m for m in c.get("/v1/team", headers=org["viewer"]).json()["members"]}
     assert names["agent"]["kind"] == "agent" and names["finance-lead"]["roles"] == ["finance"]
+
+
+def test_free_plan_is_one_person_and_records_only_after_its_days(c, org, monkeypatch):
+    monkeypatch.setattr(server, "PLAN", "free")
+    monkeypatch.setattr(server, "TRIAL_ENDS", "2999-01-01T00:00:00+00:00")
+    r = c.post("/v1/team", headers=org["admin"], json={"name": "teammate"})
+    assert r.status_code == 402 and "one person" in r.json()["detail"]
+    assert c.post("/v1/team", headers=org["admin"], json={"name": "laptop", "kind": "agent"}).status_code == 200
+    me = c.get("/v1/me", headers=org["admin"]).json()
+    assert me["plan"] == "free" and me["trial_over"] is False and me["upgrade_url"]
+    assert server.policy.shadow_for("x", "y") is (server.policy.mode == "shadow")
+    monkeypatch.setattr(server, "TRIAL_ENDS", "2000-01-01T00:00:00+00:00")
+    assert c.get("/v1/me", headers=org["admin"]).json()["trial_over"] is True
+    assert server.policy.shadow_for("x", "y", "any-rule") is True       # recorded, never blocked or held
+    monkeypatch.setattr(server, "TRIAL_ENDS", "2000-01-01")             # no timezone: never cut off over that
+    assert server.trial_over() is False
 
 
 def test_role_based_approvers(c, org):

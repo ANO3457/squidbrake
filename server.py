@@ -163,6 +163,18 @@ PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")           # used for links 
 # Key names that can look at everything they're allowed to see but never change anything, e.g. an auditor
 # or a public demo key: READ_ONLY_KEYS="auditor,visitor"
 READ_ONLY_KEYS = {k.strip() for k in os.getenv("READ_ONLY_KEYS", "").split(",") if k.strip()}
+# A free hosted dashboard (signed up on pilots.squidbrake.com/signup; provision.py sets these): one person only, and
+# after TRIAL_ENDS everything is still recorded but nothing is blocked or held (shadow mode for every agent).
+PLAN = os.getenv("SQUIDBRAKE_PLAN", "").lower()
+TRIAL_ENDS = os.getenv("SQUIDBRAKE_TRIAL_ENDS", "")           # ISO time, e.g. 2026-11-02T10:00:00+00:00
+UPGRADE_URL = os.getenv("SQUIDBRAKE_UPGRADE_URL", "https://pilots.squidbrake.com/team")
+
+
+def trial_over() -> bool:
+    try:
+        return bool(TRIAL_ENDS) and datetime.now(timezone.utc) >= datetime.fromisoformat(TRIAL_ENDS)
+    except (ValueError, TypeError):    # not a date, or no timezone: never cut someone off over a typo
+        return False
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("gateway")
@@ -1180,6 +1192,8 @@ class Policy:
         """Shadow mode: record what would happen, but let it through (everything, or the agents listed). A rule or
         sequence with its own `mode:` wins, so a team can enforce the catastrophic ones first and observe the rest."""
         self._maybe_reload()
+        if trial_over():
+            return True
         rid = str(rule_id or "")
         own = next((r["mode"] for r in self.rules if r["id"] == rid), None) or             next((q["mode"] for q in self.sequences if f"sequence:{q['id']}" == rid), None)
         if own:
@@ -3144,7 +3158,8 @@ def me(who: str = Depends(auth)):
     return {"client": who, "kind": i["kind"], "roles": i["roles"], "is_admin": keystore.is_admin(who),
             "is_owner": keystore.is_owner(who), "access": keystore.access(who),
             "can_approve": can_approve(who), "auth_enabled": keystore.enabled,
-            "mode": policy.mode, "shadow_agents": policy.shadow_agents, "version": VERSION, "latest": latest_known()}
+            "mode": policy.mode, "shadow_agents": policy.shadow_agents, "version": VERSION, "latest": latest_known(),
+            "plan": PLAN or None, "trial_ends": TRIAL_ENDS or None, "trial_over": trial_over(), "upgrade_url": UPGRADE_URL}
 
 
 def _local_only(request: Request) -> None:
@@ -3306,6 +3321,8 @@ def team_list(_: str = Depends(person)):
 @app.post("/v1/team")
 def team_add(m: MemberIn, who: str = Depends(admin)):
     approver, roles = m.approver, m.roles
+    if PLAN == "free" and m.kind == "person":
+        raise HTTPException(402, f"The free plan is for one person. To add your team: {UPGRADE_URL}")
     if m.kind == "person":
         approver, roles = _with_access(m.access, m.approver, m.roles, [])
         _check_level_change(who, m.name, [], [r.strip().lower() for r in roles])

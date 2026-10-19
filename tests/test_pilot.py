@@ -419,3 +419,34 @@ def test_all_time_usage_counts_every_day_ever_received(insights, tmp_path, monke
     assert a["pilots_total"]["events"] >= 37 and a["since"] <= old
     week = next(p for p in insights.get("/v1/admin/overview", headers=admin).json()["pilots"] if p["code"] == code)
     assert week["week"]["events"] == 7                                             # the overview is unchanged
+
+
+def test_free_signup_needs_a_work_email_then_waits_in_line_when_full(insights):
+    import app as insights_app
+    admin = {"X-Admin-Key": "admin-test-key"}
+    insights_app._requests.clear()
+    sign = lambda email, **kw: insights.post("/v1/signup", json={"name": "Asha", "email": email, "company": "Acme",
+                                                                 "agents": ["claude-code", "cursor"], **kw})
+    assert sign("asha@gmail.com").status_code == 422                       # work email only
+    assert sign("not-an-email").status_code == 422
+    assert sign("bot@acme.com", website="spam").json()["ok"]               # a bot: thanked, nothing kept
+    results = []
+    for i in range(3):                                                     # HOSTED_MAX is 2 here
+        insights_app._requests.clear()
+        results.append(sign(f"asha{i}@acme{i}.com").json())
+    assert results[-1]["waitlist"] is True and "/start/" in results[-1]["link"]
+    insights_app._requests.clear()
+    assert sign("ASHA0@acme0.com").status_code == 409                      # one free dashboard per email
+    pilots = {p["email"]: p for p in insights.get("/v1/admin/overview", headers=admin).json()["pilots"] if p.get("email")}
+    started = [p for p in pilots.values() if p["state"] == "requested"]
+    assert started and all(p["plan"] == "free" and p["trial_ends"] for p in started)
+    assert json.loads(started[0]["uses_agents"]) == ["claude-code", "cursor"]
+    waiting = pilots["asha2@acme2.com"]
+    assert waiting["state"] == "waitlist" and waiting["trial_ends"] is None
+    queue = insights.get("/v1/admin/provision", headers=admin).json()["pilots"]
+    assert waiting["code"] not in {p["code"] for p in queue}               # the provisioner never sees it
+    for p in queue:                                                        # free every slot: the line moves
+        insights.post("/v1/admin/provisioned", headers=admin, json={"code": p["code"], "state": "deleted"})
+    queue = {p["code"]: p for p in insights.get("/v1/admin/provision", headers=admin).json()["pilots"]}
+    assert queue[waiting["code"]]["state"] == "requested" and queue[waiting["code"]]["plan"] == "free"
+    assert queue[waiting["code"]]["trial_ends"]                             # its free days start now

@@ -36,3 +36,11 @@ def test_a_working_gateway_is_left_alone(monkeypatch):
     provision.start({"code": "co-1", "subdomain": "co", "dashboard": "https://co.app.test", "keys_ready": True})
     assert [c[0] for c in calls] == ["inspect"]           # nothing removed, nothing recreated
     assert reports == [("/v1/admin/provisioned", {"code": "co-1", "state": "running"})]
+
+
+def test_a_free_signup_gets_its_plan_and_end_date(monkeypatch):
+    calls, _ = fake(monkeypatch, [""])
+    provision.start({"code": "co-1", "subdomain": "co", "dashboard": "https://co.app.test", "keys_ready": False,
+                     "plan": "free", "trial_ends": "2026-11-02T10:00:00+00:00"})
+    run = next(c for c in calls if c[0] == "run")
+    assert "SQUIDBRAKE_PLAN=free" in run and "SQUIDBRAKE_TRIAL_ENDS=2026-11-02T10:00:00+00:00" in run

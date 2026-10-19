@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squidbrake free</title>
+<style>
+:root { --bg:#fafaf9; --card:#fff; --ink:#18181b; --muted:#71717a; --line:#e4e4e7; --accent:#dc2626; }
+@media (prefers-color-scheme: dark) { :root { --bg:#111114; --card:#1a1a1f; --ink:#f4f4f5; --muted:#a1a1aa; --line:#2e2e35;
+        --accent:#ef4444; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+main { max-width:620px; margin:0 auto; padding:40px 16px 64px; }
+.brand { font-weight:800; font-size:20px; } .brand span { color:var(--accent); }
+h1 { font-size:32px; line-height:1.2; margin:18px 0 8px; letter-spacing:-.02em; }
+.lead { color:var(--muted); margin:0 0 22px; font-size:17px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; }
+form { display:grid; grid-template-columns:1fr 1fr; gap:12px 14px; }
+label { display:flex; flex-direction:column; gap:4px; font-size:14px; font-weight:600; }
+fieldset { border:0; padding:0; margin:0; } legend { font-size:14px; font-weight:600; margin-bottom:6px; }
+.checks { display:flex; flex-wrap:wrap; gap:6px 16px; font-weight:400; }
+.checks label { flex-direction:row; align-items:center; gap:6px; font-weight:400; }
+.full { grid-column:1 / -1; }
+input[type=text], input[type=email] { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line);
+        border-radius:9px; padding:9px 11px; width:100%; }
+button { font:inherit; font-weight:600; border:0; border-radius:10px; padding:11px 18px; background:var(--ink); color:var(--bg);
+         cursor:pointer; justify-self:start; }
+button:disabled { opacity:.6; cursor:default; }
+.hp { position:absolute; left:-10000px; width:1px; height:1px; overflow:hidden; }
+.err { color:var(--accent); font-size:14px; margin:0; }
+.foot { color:var(--muted); font-size:14px; margin-top:18px; }
+a { color:var(--accent); }
+@media (max-width:560px) { form { grid-template-columns:1fr; } h1 { font-size:26px; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">Squid<span>brake</span></div>
+  <h1>Your own Squidbrake dashboard, free for 14 days</h1>
+  <p class="lead">Hosted for you: approve or block what your coding agents do, from any device. For one person; your agents
+    are unlimited. Nothing to run on a server.</p>
+  <div class="card">
+    <form id="f">
+      <label>Your name<input type="text" name="name" required maxlength="80" autocomplete="name"></label>
+      <label>Work email<input type="email" name="email" required maxlength="200" autocomplete="email"></label>
+      <label class="full">Company<input type="text" name="company" required maxlength="80" autocomplete="organization"></label>
+      <fieldset class="full"><legend>Agents you use</legend>
+        <div class="checks">
+          <label><input type="checkbox" name="agents" value="claude-code"> Claude Code</label>
+          <label><input type="checkbox" name="agents" value="cursor"> Cursor</label>
+          <label><input type="checkbox" name="agents" value="codex"> Codex</label>
+          <label><input type="checkbox" name="agents" value="copilot"> Copilot</label>
+          <label><input type="checkbox" name="agents" value="gemini-cli"> Gemini CLI</label>
+          <label><input type="checkbox" name="agents" value="antigravity"> Antigravity</label>
+          <label><input type="checkbox" name="agents" value="other"> Other</label>
+        </div>
+      </fieldset>
+      <div class="hp" aria-hidden="true"><label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+      <p class="err full" id="err" role="alert" hidden></p>
+      <button type="submit" id="go">Create my dashboard</button>
+    </form>
+  </div>
+  <p class="foot">After 14 days your dashboard keeps recording, but stops blocking, until you talk to us. We see your name,
+    email, the agents you picked, and counts of what was allowed, held and blocked. Never your commands, files or prompts.
+    Need it for a team? <a href="/team">Tell us</a>.</p>
+</main>
+<script>
+const f = document.getElementById("f"), err = document.getElementById("err"), go = document.getElementById("go");
+f.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  err.hidden = true; go.disabled = true; go.textContent = "Creating…";
+  const d = new FormData(f);
+  const body = { name: d.get("name"), email: d.get("email"), company: d.get("company"), agents: d.getAll("agents"),
+                 website: d.get("website") };
+  try {
+    const r = await fetch("/v1/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "Please check the form and try again.");
+    if (j.link) location.href = j.link;
+    else { f.parentElement.innerHTML = "<p>Thanks! We'll be in touch.</p>"; }
+  } catch (x) {
+    err.textContent = x.message; err.hidden = false; go.disabled = false; go.textContent = "Create my dashboard";
+  }
+});
+</script>
+</body>
+</html>
