@@ -36,9 +36,9 @@ a { color:var(--accent); }
 <body>
 <main>
   <div class="brand">Squid<span>brake</span></div>
-  <h1>Your own Squidbrake dashboard, free for 14 days</h1>
-  <p class="lead">Hosted for you: approve or block what your coding agents do, from any device. For one person; your agents
-    are unlimited. Nothing to run on a server.</p>
+  <h1>Set up Squidbrake in 3 minutes, free</h1>
+  <p class="lead">Squidbrake checks every action your coding agents take before it runs: dangerous ones are blocked, risky
+    ones wait for your OK. Tell us a little about you, and we'll give you the one line that sets it up on your computer.</p>
   <div class="card">
     <form id="f">
       <label>Your name<input type="text" name="name" required maxlength="80" autocomplete="name"></label>
@@ -57,12 +57,12 @@ a { color:var(--accent); }
       </fieldset>
       <div class="hp" aria-hidden="true"><label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
       <p class="err full" id="err" role="alert" hidden></p>
-      <button type="submit" id="go">Create my dashboard</button>
+      <button type="submit" id="go">Get my setup line</button>
     </form>
   </div>
-  <p class="foot">After 14 days your dashboard keeps recording, but stops blocking, until you talk to us. We see your name,
-    email, the agents you picked, and counts of what was allowed, held and blocked. Never your commands, files or prompts.
-    Need it for a team? <a href="/team">Tell us</a>.</p>
+  <p class="foot">It runs on your computer. We see your name, email, the agents you picked, and for each action that was
+    blocked or sent for approval: the program (e.g. "rm"), the rule and what happened. Never your commands, files or
+    prompts. Need it for a team? <a href="/team">Tell us</a>.</p>
 </main>
 <script>
 const f = document.getElementById("f"), err = document.getElementById("err"), go = document.getElementById("go");
@@ -79,7 +79,7 @@ f.addEventListener("submit", async (e) => {
     if (j.link) location.href = j.link;
     else { f.parentElement.innerHTML = "<p>Thanks! We'll be in touch.</p>"; }
   } catch (x) {
-    err.textContent = x.message; err.hidden = false; go.disabled = false; go.textContent = "Create my dashboard";
+    err.textContent = x.message; err.hidden = false; go.disabled = false; go.textContent = "Get my setup line";
   }
 });
 </script>

@@ -84,7 +84,7 @@ with db() as _c:
     for _col, _type in (("hosted", "INTEGER NOT NULL DEFAULT 0"), ("subdomain", "TEXT"), ("state", "TEXT"),
                         ("admin_key", "TEXT"), ("agent_key", "TEXT"), ("keys_revealed_at", "TEXT"), ("error", "TEXT"),
                         ("mrr", "INTEGER NOT NULL DEFAULT 0"), ("paying_since", "TEXT"),
-                        # free self-serve signups (/signup): who, and when the free days end
+                        # self-serve signups (/signup): who, and which agents they said they use
                         ("email", "TEXT"), ("uses_agents", "TEXT"), ("plan", "TEXT"), ("trial_ends", "TEXT")):
         if _col not in _have:
             _c.execute(f"ALTER TABLE pilots ADD COLUMN {_col} {_type}")
@@ -106,17 +106,12 @@ seed_community()
 
 HOSTED_DOMAIN = os.getenv("HOSTED_DOMAIN", "")        # e.g. app.squidbrake.com (with a *.app wildcard DNS record)
 HOSTED_MAX = int(os.getenv("HOSTED_MAX", "6"))         # each hosted gateway uses ~50-100 MB of memory
-TRIAL_DAYS = int(os.getenv("TRIAL_DAYS", "14"))        # free signups: then recorded only, nothing blocked
-LIVE = "hosted=1 AND state IN ('requested', 'running', 'failed')"   # takes a hosted slot (a waitlisted one doesn't)
+LIVE = "hosted=1 AND state != 'deleting'"               # takes a hosted slot
 
 
 def _subdomain(c, slug: str) -> str:
     taken = {r[0] for r in c.execute("SELECT subdomain FROM pilots WHERE subdomain IS NOT NULL")}
     return slug if slug not in taken and slug not in ("www", "admin", "pilots", "app") else f"{slug}-{secrets.token_hex(2)}"
-
-
-def _trial_end() -> str:
-    return (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat(timespec="seconds")
 
 
 def now() -> str:
@@ -446,16 +441,11 @@ def delete_pilot(code: str):
 
 @app.get("/v1/admin/provision", dependencies=[Depends(admin)])
 def provision_queue():
-    with _lock, db() as c:
-        # a slot opened (a pilot deleted): the oldest waitlisted signups get it, and their free days start now
-        free = HOSTED_MAX - c.execute(f"SELECT COUNT(*) FROM pilots WHERE {LIVE}").fetchone()[0]
-        for (code,) in c.execute("SELECT code FROM pilots WHERE state='waitlist' ORDER BY created_at LIMIT ?",
-                                 (max(free, 0),)).fetchall():
-            c.execute("UPDATE pilots SET state='requested', trial_ends=? WHERE code=?", (_trial_end(), code))
+    with db() as c:
         # keys_ready: the keys arrived here (and may since have been shown to the founder and forgotten)
         rows = c.execute("SELECT code, subdomain, state, plan, trial_ends, "
                          "(admin_key IS NOT NULL OR keys_revealed_at IS NOT NULL) AS keys_ready "
-                         "FROM pilots WHERE hosted=1 AND state != 'waitlist'").fetchall()
+                         "FROM pilots WHERE hosted=1").fetchall()
     return {"domain": HOSTED_DOMAIN, "pilots": [dict(r) | {"keys_ready": bool(r["keys_ready"]),
                                                           "dashboard": dashboard_url(r["subdomain"])} for r in rows]}
 
@@ -966,7 +956,8 @@ FREE_MAIL = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook
 
 @app.post("/v1/signup")
 def signup(s: SignupIn, request: Request):
-    """The public free plan: a hosted dashboard for one person for TRIAL_DAYS, or a waitlist place when it's full."""
+    """The public sign-up: a pilot code whose start page has the local install line. The install joins with it, so
+    its counts and what was held or blocked (program and rule only, see pilot.py) reach the admin page."""
     ip = request.client.host if request.client else ""
     recent = [x for x in _requests.get(ip, []) if time.time() - x < 3600]
     if len(recent) >= 5:
@@ -978,22 +969,17 @@ def signup(s: SignupIn, request: Request):
     if email.rsplit("@", 1)[1] in FREE_MAIL:
         raise HTTPException(422, "please use your work email")
     if s.website:                                       # a bot: say thanks, keep nothing
-        return {"ok": True, "waitlist": True}
-    if not HOSTED_DOMAIN:
-        raise HTTPException(503, "sign-ups are closed right now")
+        return {"ok": True}
     agents = [a.strip().lower()[:30] for a in s.agents if a.strip()]
     slug = re.sub(r"[^a-z0-9]+", "-", s.company.lower()).strip("-")[:20].strip("-") or "team"
     code = f"{slug}-{secrets.token_hex(6)}"
     with _lock, db() as c:
         if c.execute("SELECT 1 FROM pilots WHERE lower(email)=?", (email,)).fetchone():
-            raise HTTPException(409, "this email already has a free dashboard: use the link you got, or write to us")
-        full = c.execute(f"SELECT COUNT(*) FROM pilots WHERE {LIVE}").fetchone()[0] >= HOSTED_MAX
-        c.execute("INSERT INTO pilots (code, company, contact, note, created_at, hosted, subdomain, state, email, uses_agents, "
-                  "plan, trial_ends) VALUES (?,?,?,?,?,1,?,?,?,?,'free',?)",
-                  (code, s.company.strip(), f"{s.name.strip()} · {email}", "free signup · agents: " + (", ".join(agents) or "-"),
-                   now(), _subdomain(c, slug), "waitlist" if full else "requested", email, json.dumps(agents),
-                   None if full else _trial_end()))
-    return {"ok": True, "waitlist": full, "link": f"{public_url(request)}/start/{code}"}
+            raise HTTPException(409, "this email already signed up: use the link you got, or write to us")
+        c.execute("INSERT INTO pilots (code, company, contact, note, created_at, email, uses_agents) VALUES (?,?,?,?,?,?,?)",
+                  (code, s.company.strip(), f"{s.name.strip()} · {email}", "signup · agents: " + (", ".join(agents) or "-"),
+                   now(), email, json.dumps(agents)))
+    return {"ok": True, "link": f"{public_url(request)}/start/{code}"}
 
 
 @app.get("/signup", response_class=HTMLResponse)

@@ -216,10 +216,6 @@ function hostedPage() {
       keys.innerHTML = `<p>Your keys were already shown on this page. Your dashboard: <a href="${esc(D.dashboard)}/dashboard" target="_blank" rel="noopener">${esc(D.dashboard)}</a>
         (sign in with your <b>admin</b> key). Lost them? Reply to the message this link came in and we'll issue new ones.</p>
         <p class="note">For step 2, put your <b>agent</b> key in place of <code>${keyless}</code>.</p>`;
-    } else if (s.state === "waitlist") {
-      keys.innerHTML = `<p>⏳ All free dashboards are taken right now, and you're next in line. Keep this link: this page
-        sets yours up by itself as soon as one opens, and your 14 free days start then.</p>`;
-      setTimeout(poll, 60000);
     } else if (!s.keys_ready) {
       keys.innerHTML = `<p>⏳ Setting up your dashboard at <b>${esc(D.dashboard)}</b>. This page updates by itself (under a minute).</p>`;
       setTimeout(poll, 4000);
@@ -251,7 +247,7 @@ function hostedPage() {
     current = cmds(k.agent_key); show(box.dataset.os);
     document.getElementById("keyNote").textContent = "Your agent key is filled in. Paste the whole line.";
   };
-  render({ keys_ready: D.keys_ready, keys_shown: D.keys_shown, state: D.state });
+  render({ keys_ready: D.keys_ready, keys_shown: D.keys_shown });
 }
 
 function addCopy(el) {
