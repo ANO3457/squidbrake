@@ -45,7 +45,7 @@ class RunNow:   # sends straight away, so a test can look at what went out
 
 def answers(monkeypatch, *replies):
     it = iter(replies)
-    monkeypatch.setattr("builtins.input", lambda _q: next(it))
+    monkeypatch.setattr("builtins.input", lambda _q: next(it, ""))   # past the replies: Enter
 
 
 def test_first_run_says_what_is_sent_once_and_only_the_command_name_goes(sent, monkeypatch, capsys):
@@ -123,6 +123,10 @@ def test_register_asks_first_and_sends_the_email(sent, monkeypatch):
     assert sent[0]["event"] == "$identify"
     assert sent[0]["properties"]["$set"]["email"] == "me@acme.com"
     assert sent[0]["properties"]["$set"]["company"] == "Acme"
+    assert isinstance(sent[0]["properties"]["$set"]["agents"], list)
+    answers(monkeypatch, "")
+    telemetry.register(["me@acme.com", "--name", "Asha"], "1")
+    assert sent[1]["properties"]["$set"]["name"] == "Asha"
 
 
 def test_where_they_heard_about_it_is_one_word_from_a_list(sent, monkeypatch):
@@ -147,10 +151,27 @@ def test_a_named_link_answers_it_and_free_text_is_never_kept(sent, monkeypatch):
     assert telemetry._ask_source() is None                               # not a number from the list: nothing
 
 
-def test_the_email_is_never_asked_on_the_first_run(sent, monkeypatch):
-    answers(monkeypatch, "")                                              # where-from only; a 2nd input would raise
+def test_the_first_run_email_is_optional_and_skipping_sends_nothing_about_you(sent, monkeypatch):
+    answers(monkeypatch, "", "")                                          # where-from, email: both skipped
     telemetry.maybe(["doctor"], "1")
-    assert "email" not in telemetry.load() and sent[0]["event"] == "cli_command"
+    assert "email" not in telemetry.load() and [b["event"] for b in sent] == ["cli_command"]
+
+
+def test_a_first_run_email_sends_name_and_installed_agents(sent, monkeypatch):
+    monkeypatch.setattr(telemetry, "installed_agents", lambda: ["claude-code", "cursor"])
+    answers(monkeypatch, "", "me@acme.com", "Asha")
+    telemetry.maybe(["doctor"], "1")
+    ident = next(b for b in sent if b["event"] == "$identify")
+    assert ident["properties"]["$set"]["email"] == "me@acme.com"
+    assert ident["properties"]["$set"]["name"] == "Asha"
+    assert ident["properties"]["$set"]["agents"] == ["claude-code", "cursor"]
+    assert telemetry.load()["email"] == "me@acme.com"
+
+
+def test_not_an_email_is_skipped(sent, monkeypatch):
+    answers(monkeypatch, "", "not an email")
+    telemetry.maybe(["doctor"], "1")
+    assert all(b["event"] != "$identify" for b in sent)
 
 
 def test_a_join_that_failed_is_retried_once_a_day_and_never_after_leaving(sent, monkeypatch, tmp_path):

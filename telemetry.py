@@ -4,7 +4,8 @@ They are always on. The first time you run `squidbrake` in a terminal it says so
 you heard about Squidbrake). Scripts, CI, `--yes` and the agent hooks send nothing until that first run happened.
 
     squidbrake telemetry status      exactly what is sent
-    squidbrake register EMAIL        tell the Squidbrake team who you are (optional; asks first)
+    squidbrake register EMAIL        tell the Squidbrake team who you are (optional; asks first; also asked once on
+                                     the first run, Enter skips it)
 
 What is sent, once each time you run a command:
   - a random id made on this computer (not tied to you unless you give your email, below)
@@ -14,7 +15,8 @@ What is sent, once each time you run a command:
   - where you heard about Squidbrake, if you answered (one word from a list, e.g. "linkedin"), or the name of the
     link you installed from (SQUIDBRAKE_REF, e.g. "whatsapp")
 Never sent: commands an agent ran, file or folder names, file contents, prompts, rules, keys, the audit trail,
-names of people, your email (unless you give it with `squidbrake register`).
+names of people, your name, work email and the coding agents installed here (only if you give your email, on the
+first run or with `squidbrake register`).
 The agent hooks (`hook`, `agent-hook`, `shell-guard`, `proxy`) send nothing, so nothing slows a tool call down.
 
 The gateway's usage counts go to the Squidbrake team the same way, exactly as a pilot's do (see pilot.py for every
@@ -55,6 +57,45 @@ REF_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
 def ref_from_env() -> str | None:
     ref = os.getenv("SQUIDBRAKE_REF", "").strip().lower()
     return ref if REF_RE.match(ref) else None
+
+
+EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
+
+
+def installed_agents() -> list[str]:
+    """Names only of the coding agents installed here (the ones connect.py can hook), e.g. ["claude-code", "cursor"]."""
+    try:
+        import shutil
+        import connect
+        found = [n for n, t in connect.hook_agents().items() if t["present"]]
+        if shutil.which("claude") or (Path.home() / ".claude").exists():
+            found.insert(0, "claude-code")
+        return found
+    except Exception:    # never break a command over this
+        return []
+
+
+def _identify(cfg: dict, email: str, version: str, name: str | None = None, company: str | None = None) -> None:
+    cfg.setdefault("id", str(uuid.uuid4()))
+    cfg["email"] = email
+    _save(cfg)
+    props = {"email": email, "agents": installed_agents(), "version": version,
+             **({"name": name} if name else {}), **({"company": company} if company else {})}
+    _send("$identify", cfg["id"], {"$set": props}, wait=True)
+
+
+def _ask_contact() -> tuple[str, str | None] | None:
+    """Optional, once: work email and name, so the team can reach the person. Enter skips; nothing is sent then."""
+    print("Optional: your work email, so the Squidbrake team can help you set it up (Enter to skip).")
+    email = (_ask("Work email: ") or "")[:254]
+    if not EMAIL_RE.match(email):
+        if email:
+            print("That doesn't look like an email; skipped. Later:  squidbrake register EMAIL")
+        print()
+        return None
+    name = (_ask("Your name: ") or "")[:120] or None
+    print(f"Sent with it: the coding agents installed here ({', '.join(installed_agents()) or 'none found'}).\n")
+    return email, name
 
 
 def _ask_source() -> str | None:
@@ -161,6 +202,8 @@ def _first_run(cfg: dict, version: str) -> dict:
     if ref := ref_from_env() or _ask_source():
         cfg["ref"] = ref
     _save(cfg)
+    if contact := _ask_contact():
+        _identify(cfg, contact[0], version, name=contact[1])
     cfg["counts_joined"] = _share_counts(True, version, cfg.get("ref"))
     if not cfg["counts_joined"]:
         cfg["counts_retry"] = _today()          # tried today: the next try is tomorrow (see maybe)
@@ -223,29 +266,28 @@ def maybe(argv: list[str], version: str) -> None:
 
 def register(argv: list[str], version: str) -> int:
     args = [a for a in argv if a != "--yes"]
-    company = None
-    if "--company" in args:
-        i = args.index("--company")
-        company = " ".join(args[i + 1:i + 2]) or None
-        del args[i:i + 2]
-    if len(args) != 1 or "@" not in args[0]:
-        print("usage: squidbrake register EMAIL [--company NAME] [--yes]")
+    opts = {}
+    for flag in ("--company", "--name"):
+        if flag in args:
+            i = args.index(flag)
+            opts[flag[2:]] = (" ".join(args[i + 1:i + 2]) or "")[:160] or None
+            del args[i:i + 2]
+    company, name = opts.get("company"), opts.get("name")
+    if len(args) != 1 or not EMAIL_RE.match(args[0]):
+        print("usage: squidbrake register EMAIL [--name NAME] [--company NAME] [--yes]")
         return 2
     if not POSTHOG_KEY:
         print("This build of Squidbrake has no stats service set up; nothing was sent.")
         return 1
     email = args[0]
-    print(f"This sends to the Squidbrake team: {email}" + (f", company {company}" if company else "") +
+    print(f"This sends to the Squidbrake team: {email}" + (f", name {name}" if name else "") +
+          (f", company {company}" if company else "") +
+          f", the coding agents installed here ({', '.join(installed_agents()) or 'none found'})"
           ", and this computer's random usage id, so they can reach you.")
     if "--yes" not in argv and (_ask("Send it? [Y/n] ") or "").lower() not in ("", "y", "yes"):
         print("Nothing was sent.")
         return 0
-    cfg = load()
-    cfg.setdefault("id", str(uuid.uuid4()))
-    cfg["email"] = email
-    _save(cfg)
-    _send("$identify", cfg["id"], {"$set": {"email": email, **({"company": company} if company else {}),
-                                            "version": version}}, wait=True)
+    _identify(load(), email, version, name=name, company=company)
     print("Sent. Thanks, the team will be in touch.")
     return 0
 

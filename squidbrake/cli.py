@@ -24,7 +24,7 @@ The `squidbrake` command (installed with pip):
                                      serve it by URL, for ChatGPT / claude.ai connectors, Devin, n8n, cloud agents
   squidbrake pilot join CODE --server URL   share usage counts with a pilot (asks first; see pilot.py)
   squidbrake telemetry status        exactly what the anonymous usage stats send (see telemetry.py)
-  squidbrake register EMAIL          tell the Squidbrake team who you are (optional, asks first)
+  squidbrake register EMAIL [--name NAME]   tell the Squidbrake team who you are (optional, asks first)
   squidbrake add-key NAME | keys | verify FILE | ...   see: squidbrake --help
 
 Data, keys and rules.yaml live in ~/.squidbrake (set SQUIDBRAKE_HOME to move them).
