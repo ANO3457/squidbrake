@@ -2,10 +2,9 @@
 
 Change control for AI agents. Everyday work runs on its own. When Claude Code, Cursor, Codex or Gemini CLI wants to do something it can't take back, a teammate sees what it will change ("deletes 4,312 rows of 10,240 in orders", "destroys 12 resources, including the prod database") and says yes or no.
 
-- Open source, Apache-2.0: https://github.com/batrapulkit/squidbrake
 - Install: `pipx install squidbrake`
 - Backed by Entrepreneur First
-- In pilot with a consumer services company running agents in production
+- Four design-partner pilots; 688 agent actions checked since 7 October 2026, 15 risky actions stopped, 1 signed LOI
 - Book a 30-minute demo: https://calendly.com/pulkitbatra2024/new-meeting-1 · hello@squidbrake.com
 
 ## The problem: every step looks fine, the chain doesn't
