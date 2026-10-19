@@ -4,234 +4,361 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Squidbrake Console</title>
-<meta name="description" content="Set up Squidbrake in 3 minutes, free: every action your coding agents take is checked before it runs.">
+<meta name="description" content="Put a brake on your coding agents in 3 minutes, free. Every tool call is checked before it runs.">
+<meta name="theme-color" content="#E6EBE2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Host+Grotesk:wght@300..700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root { --bg:#07070a; --ink:#f4f4f5; --muted:#a1a1aa; --dim:#71717a; --line:rgba(255,255,255,.10);
-        --glass:rgba(18,18,24,.62); --field:rgba(255,255,255,.04); --accent:#ef4444; --accent2:#f97316; --ok:#22c55e; }
+/* the squidbrake.com palette */
+:root { --bg:#E6EBE2; --surface:#F4F6F1; --ink:#1E2A23; --muted:#56625A; --line:#C9D2C5; --soft:#DCE3D8;
+        --go:#237447; --stop:#C0301C; --hold:#A5560C; --accent:#F2622E; --accent-hover:#E4541F;
+        --sans:"Host Grotesk","Helvetica Neue",Helvetica,Arial,sans-serif;
+        --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace; color-scheme:light; }
 * { box-sizing:border-box; }
 html, body { margin:0; background:var(--bg); color:var(--ink); }
-body { font:16px/1.55 Inter,system-ui,-apple-system,"Segoe UI",sans-serif; min-height:100vh; overflow-x:hidden; }
-#scene { position:fixed; inset:0; width:100%; height:100%; display:block; z-index:0; }
-.veil { position:fixed; inset:0; z-index:1; pointer-events:none;
-        background:radial-gradient(ellipse at 20% 40%, rgba(7,7,10,.15), rgba(7,7,10,.75) 70%),
-                   linear-gradient(180deg, rgba(7,7,10,0) 60%, rgba(7,7,10,.9)); }
-.wrap { position:relative; z-index:2; max-width:1180px; margin:0 auto; padding:28px 16px 48px;
-        min-height:100vh; display:flex; flex-direction:column; }
-nav { display:flex; align-items:center; justify-content:space-between; }
-.brand { font-weight:800; font-size:20px; letter-spacing:-.02em; color:var(--ink); text-decoration:none; }
-.brand span { color:var(--accent); }
-nav a.small { color:var(--muted); text-decoration:none; font-size:14px; }
-nav a.small:hover { color:var(--ink); }
-.grid { flex:1; display:grid; grid-template-columns:1.1fr .9fr; gap:56px; align-items:center; padding:40px 0; }
-.pill { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); background:rgba(255,255,255,.03);
-        border-radius:999px; padding:5px 12px 5px 8px; font-size:13px; color:var(--muted); }
-.pill i { width:8px; height:8px; border-radius:50%; background:var(--ok); box-shadow:0 0 12px var(--ok); }
-h1 { font-size:clamp(36px, 5.2vw, 62px); line-height:1.04; letter-spacing:-.035em; margin:18px 0 18px; font-weight:800; }
-h1 em { font-style:normal; background:linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip:text;
-        background-clip:text; color:transparent; }
-.lead { color:var(--muted); font-size:18px; max-width:520px; margin:0 0 26px; }
-.legend { display:flex; flex-wrap:wrap; gap:10px 22px; font-size:14px; color:var(--muted); }
-.legend span { display:inline-flex; align-items:center; gap:8px; }
-.dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
-.card { background:var(--glass); border:1px solid var(--line); border-radius:20px; padding:26px;
-        backdrop-filter:blur(18px) saturate(140%); -webkit-backdrop-filter:blur(18px) saturate(140%);
-        box-shadow:0 30px 80px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06); }
-.card h2 { margin:0 0 4px; font-size:21px; letter-spacing:-.01em; }
-.card .sub { margin:0 0 20px; color:var(--muted); font-size:14px; }
-form { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+body { font:16px/1.55 var(--sans); min-height:100vh; overflow-x:hidden; -webkit-font-smoothing:antialiased; }
+.stage { position:relative; height:300px; border:1px solid var(--line); border-radius:16px; overflow:hidden;
+         background:radial-gradient(ellipse at 40% 45%, #F4F6F1, #E1E7DD 75%); }
+#scene { position:absolute; inset:0; width:100%; height:100%; display:block; }
+.stage .legend { position:absolute; top:12px; left:14px; display:flex; gap:14px; font-family:var(--mono); font-size:12px; color:var(--muted); }
+.stage .legend span { display:inline-flex; align-items:center; gap:6px; }
+.stage .legend i { width:8px; height:8px; border-radius:50%; display:inline-block; }
+.wrap { position:relative; max-width:1200px; margin:0 auto; padding:0 24px; min-height:100vh; display:flex; flex-direction:column; }
+.mono { font-family:var(--mono); }
+
+nav { display:flex; align-items:center; justify-content:space-between; padding:18px 0; border-bottom:1px solid var(--line); }
+.brand { display:inline-flex; align-items:center; gap:10px; font-weight:600; font-size:22px; letter-spacing:-.02em;
+         color:var(--ink); text-decoration:none; }
+.brand svg { width:34px; height:34px; color:var(--ink); }
+.links { display:flex; align-items:center; gap:26px; font-size:15px; }
+.links a { color:var(--muted); text-decoration:none; } .links a:hover { color:var(--ink); }
+.links a.cta { background:var(--surface); border:1px solid var(--line); color:var(--ink); padding:8px 14px; border-radius:8px; }
+
+.grid { flex:1; display:grid; grid-template-columns:1.15fr .85fr; gap:56px; align-items:center; padding:48px 0 32px; }
+.tags { display:flex; flex-wrap:wrap; align-items:center; gap:14px; }
+.ef { display:inline-flex; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--line);
+      border-radius:8px; padding:5px 10px 5px 5px; font-size:14px; }
+.ef b { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:5px; background:#6D28D9; color:#fff;
+        font-size:11px; font-weight:700; }
+.tag { font-family:var(--mono); font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+       display:inline-flex; align-items:center; gap:8px; }
+.tag i { width:7px; height:7px; border-radius:50%; background:#2FD574; box-shadow:0 0 0 3px rgba(47,213,116,.18); }
+h1 { font-size:clamp(40px, 5.4vw, 66px); line-height:1.02; letter-spacing:-.055em; font-weight:500; margin:22px 0 18px; max-width:640px; }
+h1 span { color:var(--accent); }
+.lead { color:var(--muted); font-size:19px; line-height:1.5; max-width:520px; margin:0 0 28px; }
+
+/* the live verdict card, like the ones on squidbrake.com */
+.feed { position:absolute; right:14px; bottom:14px; width:min(300px, calc(100% - 28px)); background:var(--surface); border:1px solid var(--line); border-radius:12px;
+        padding:14px 16px; box-shadow:0 18px 50px rgba(30,42,35,.10); }
+.feed .top { display:flex; justify-content:space-between; font-family:var(--mono); font-size:12.5px; color:var(--muted); }
+.feed .top b { color:var(--ink); font-weight:500; }
+.feed .what { font-size:17px; font-weight:600; margin:8px 0 2px; letter-spacing:-.01em; }
+.feed .cmd { font-family:var(--mono); font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.feed .bottom { display:flex; justify-content:space-between; align-items:center; margin-top:12px; padding-top:10px;
+                border-top:1px solid var(--line); font-family:var(--mono); font-size:12.5px; color:var(--muted); }
+.verdict { display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-weight:600; font-size:14px; }
+.verdict i { width:16px; height:16px; border-radius:50%; display:inline-grid; place-items:center; color:#fff; font-style:normal; font-size:10px; }
+.v-go { color:var(--go); } .v-go i { background:var(--go); }
+.v-hold { color:var(--hold); } .v-hold i { background:var(--hold); }
+.v-stop { color:var(--stop); } .v-stop i { background:var(--stop); }
+.feed .body { transition:opacity .25s, transform .25s; }
+.feed.swap .body { opacity:0; transform:translateY(6px); }
+.stat { margin-top:18px; font-size:15px; } .stat b { font-weight:600; } .stat span { color:var(--muted); }
+
+/* the form */
+.card { background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:28px;
+        box-shadow:0 30px 80px rgba(30,42,35,.12); }
+.card .k { font-family:var(--mono); font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+.card h2 { margin:6px 0 6px; font-size:26px; font-weight:500; letter-spacing:-.03em; }
+.card .sub { margin:0 0 20px; color:var(--muted); font-size:15px; }
+form { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 .full { grid-column:1 / -1; }
-label { display:flex; flex-direction:column; gap:6px; font-size:13px; font-weight:600; color:#d4d4d8; }
-input[type=text], input[type=email] { font:inherit; font-weight:400; color:var(--ink); background:var(--field);
-        border:1px solid var(--line); border-radius:11px; padding:11px 13px; width:100%; outline:none;
-        transition:border-color .15s, background .15s; }
-input[type=text]:focus, input[type=email]:focus { border-color:rgba(239,68,68,.7); background:rgba(255,255,255,.06); }
-fieldset { border:0; padding:0; margin:0; }
-legend { font-size:13px; font-weight:600; color:#d4d4d8; margin-bottom:8px; }
+label { display:flex; flex-direction:column; gap:6px; font-size:13.5px; font-weight:600; }
+input[type=text], input[type=email] { font:inherit; font-weight:400; color:var(--ink); background:#fff; border:1px solid var(--line);
+        border-radius:8px; padding:11px 12px; width:100%; outline:none; transition:border-color .15s, box-shadow .15s; }
+input[type=text]:focus, input[type=email]:focus { border-color:var(--ink); box-shadow:0 0 0 3px rgba(30,42,35,.08); }
+fieldset { border:0; padding:0; margin:0; min-width:0; }
+legend { font-size:13.5px; font-weight:600; margin-bottom:8px; padding:0; }
 .chips { display:flex; flex-wrap:wrap; gap:8px; }
-.chips label { position:relative; font-weight:500; font-size:13px; }
+.chips label { position:relative; font-weight:500; }
 .chips input { position:absolute; opacity:0; inset:0; margin:0; cursor:pointer; }
-.chips span { display:inline-block; border:1px solid var(--line); background:var(--field); border-radius:999px;
-              padding:7px 12px; color:var(--muted); transition:all .15s; cursor:pointer; }
-.chips input:checked + span { border-color:rgba(239,68,68,.75); color:var(--ink); background:rgba(239,68,68,.14); }
+.chips span { display:inline-block; border:1px solid var(--line); background:#fff; border-radius:8px; padding:7px 11px;
+              font-family:var(--mono); font-size:12.5px; color:var(--muted); transition:all .12s; cursor:pointer; }
+.chips input:checked + span { border-color:var(--ink); background:var(--ink); color:var(--surface); }
 .chips input:focus-visible + span { outline:2px solid var(--accent); outline-offset:2px; }
-button.go { grid-column:1 / -1; font:inherit; font-weight:700; border:0; border-radius:12px; padding:13px 18px; margin-top:6px;
-            color:#fff; cursor:pointer; background:linear-gradient(90deg, var(--accent), var(--accent2));
-            box-shadow:0 10px 30px rgba(239,68,68,.35); transition:transform .12s, box-shadow .12s, opacity .12s; }
-button.go:hover { transform:translateY(-1px); box-shadow:0 14px 36px rgba(239,68,68,.45); }
-button.go:disabled { opacity:.6; cursor:default; transform:none; }
+button.go { grid-column:1 / -1; font:inherit; font-weight:600; font-size:16px; border:0; border-radius:8px; padding:13px 18px; margin-top:4px;
+            background:var(--accent); color:var(--ink); cursor:pointer; transition:background .12s, transform .12s; }
+button.go:hover { background:var(--accent-hover); }
+button.go:active { transform:translateY(1px); }
+button.go:disabled { opacity:.6; cursor:default; }
 .hp { position:absolute; left:-10000px; width:1px; height:1px; overflow:hidden; }
-.err { color:#fca5a5; font-size:14px; margin:0; }
-.fine { color:var(--dim); font-size:12.5px; margin:16px 0 0; }
-.fine a, .state a { color:#fca5a5; }
-.state { text-align:center; padding:12px 4px; }
-.state .big { font-size:42px; line-height:1; margin-bottom:12px; }
+.err { color:var(--stop); font-size:14px; margin:0; }
+.fine { color:var(--muted); font-size:13px; margin:16px 0 0; line-height:1.5; }
+.fine a, .state a { color:var(--ink); }
+.state { text-align:center; padding:14px 4px; }
+.state .big { width:56px; height:56px; border-radius:50%; margin:0 auto 14px; display:grid; place-items:center; font-size:24px;
+              background:var(--soft); }
 .state h2 { margin:0 0 8px; }
 .state p { color:var(--muted); margin:0 0 6px; }
-.mono { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:13px; color:var(--ink); }
-.spin { width:28px; height:28px; border-radius:50%; border:3px solid rgba(255,255,255,.15); border-top-color:var(--accent);
-        animation:spin .8s linear infinite; margin:6px auto 14px; }
+.spin { width:30px; height:30px; border-radius:50%; border:3px solid var(--line); border-top-color:var(--accent);
+        animation:spin .8s linear infinite; margin:6px auto 16px; }
 @keyframes spin { to { transform:rotate(360deg); } }
-footer { color:var(--dim); font-size:13px; display:flex; gap:18px; flex-wrap:wrap; }
-@media (max-width:900px) { .grid { grid-template-columns:1fr; gap:28px; padding:24px 0; } .lead { font-size:17px; } }
-@media (max-width:520px) { form { grid-template-columns:1fr; } .card { padding:20px; } }
-@media (prefers-reduced-motion: reduce) { .spin { animation-duration:3s; } }
+
+/* how it works */
+.steps { display:grid; grid-template-columns:repeat(3, 1fr); gap:0; border-top:1px solid var(--line); margin-bottom:28px; }
+.steps div { padding:20px 20px 4px 0; }
+.steps div + div { padding-left:20px; border-left:1px solid var(--line); }
+.steps .n { font-family:var(--mono); font-size:12px; color:var(--muted); letter-spacing:.06em; }
+.steps h3 { margin:6px 0 4px; font-size:17px; font-weight:600; letter-spacing:-.01em; }
+.steps p { margin:0; color:var(--muted); font-size:14.5px; }
+footer { display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:16px 0 24px; border-top:1px solid var(--line);
+         color:var(--muted); font-size:13.5px; }
+footer a { color:var(--muted); }
+
+@media (max-width:960px) {
+  .grid { grid-template-columns:1fr; gap:34px; padding:32px 0 24px; }
+  .links a:not(.cta) { display:none; }
+}
+@media (max-width:640px) {
+  .wrap { padding:0 16px; }
+  form { grid-template-columns:1fr; }
+  .card { padding:20px; }
+  .steps { grid-template-columns:1fr; }
+  .steps div + div { padding-left:0; border-left:0; border-top:1px solid var(--line); }
+  .lead { font-size:17px; }
+  .stage { height:340px; }
+  .feed { left:12px; right:12px; bottom:12px; width:auto; }
+}
+@media (prefers-reduced-motion: reduce) { .feed .body, .spin { transition:none; animation-duration:3s; } }
 </style>
 </head>
 <body>
-<canvas id="scene" aria-hidden="true"></canvas>
-<div class="veil"></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="sb-mark" viewBox="0 0 64 64"><path fill="currentColor" d="M16 30V21.5C16 12.4 23.2 5 32 5C40.8 5 48 12.4 48 21.5V30Z"></path><g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M23 34V48.2C23 51.4 21.7 53.9 19.6 55.8"></path><path d="M32 34V44.6"></path><path d="M41 34V48.2C41 51.4 42.3 53.9 44.4 55.8"></path></g><circle fill="currentColor" cx="32" cy="52.6" r="2.9"></circle><rect fill="#F2622E" x="11" y="24.5" width="42" height="11" rx="5.5"></rect><circle fill="#2FD574" cx="41.2" cy="30" r="2.5"></circle></symbol>
+</svg>
 <div class="wrap">
   <nav>
-    <a class="brand" href="https://squidbrake.com">Squid<span>brake</span></a>
-    <a class="small" href="https://squidbrake.com">squidbrake.com ↗</a>
+    <a class="brand" href="https://squidbrake.com"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#sb-mark"></use></svg>squidbrake</a>
+    <div class="links">
+      <a href="https://squidbrake.com/docs.html">Docs</a>
+      <a href="https://github.com/batrapulkit/squidbrake">GitHub</a>
+      <a class="cta" href="/team">For teams</a>
+    </div>
   </nav>
+
   <div class="grid">
     <section>
-      <div class="pill"><i></i> Free · runs on your computer · 3 minutes</div>
-      <h1>Your agents move fast.<br><em>Squidbrake</em> catches what they shouldn't do.</h1>
-      <p class="lead">Every action your coding agent takes is checked before it runs. Safe ones pass, risky ones wait for
-        your OK, and dangerous ones (wiping a folder, printing your <span class="mono">.env</span>, dropping a table) are stopped.</p>
-      <div class="legend">
-        <span><i class="dot" style="background:#e4e4e7"></i> allowed</span>
-        <span><i class="dot" style="background:#f97316"></i> waits for you</span>
-        <span><i class="dot" style="background:#ef4444"></i> blocked</span>
+      <div class="tags">
+        <span class="ef"><b>EF</b> Backed by Entrepreneur First</span>
+        <span class="tag"><i></i> Free · open source, Apache-2.0</span>
       </div>
+      <h1>Put a brake on your coding agents. <span>In 3 minutes.</span></h1>
+      <p class="lead">Every tool call your agent makes is checked before it runs, on your own computer. Safe work goes
+        straight through, risky steps wait for your OK, and the damaging ones never happen.</p>
+
+      <div class="stage">
+      <canvas id="scene" aria-hidden="true"></canvas>
+      <div class="legend"><span><i style="background:#237447"></i>allowed</span><span><i style="background:#C77A1E"></i>waits for you</span><span><i style="background:#C0301C"></i>blocked</span></div>
+      <div class="feed" id="feed" aria-live="polite">
+        <div class="body">
+          <div class="top"><span><b id="fN">01</b> <span id="fTool">Bash</span></span><span id="fMs">4 ms</span></div>
+          <div class="what" id="fWhat">Run the tests</div>
+          <div class="cmd" id="fCmd">npm test</div>
+          <div class="bottom"><span class="verdict v-go" id="fV"><i>✓</i> Allowed</span><span id="fRule">allow-coding-work</span></div>
+        </div>
+      </div>
+      </div>
+      <p class="stat"><b>The check takes 9 ms at p95.</b> <span>Your agent doesn't feel it.</span></p>
     </section>
+
     <section class="card" id="card">
+      <div class="k">Squidbrake Console</div>
       <h2>Get your setup line</h2>
-      <p class="sub">Tell us a little about you. We'll give you one line that sets Squidbrake up on your computer.</p>
+      <p class="sub">Tell us a little about you. We'll email you a sign-in link, then give you the one line that sets
+        Squidbrake up on your computer.</p>
       <form id="f" novalidate>
         <label>Your name<input type="text" name="name" required maxlength="80" autocomplete="name"></label>
         <label>Company<input type="text" name="company" required maxlength="80" autocomplete="organization"></label>
         <label class="full">Work email<input type="email" name="email" required maxlength="200" autocomplete="email"></label>
         <fieldset class="full"><legend>Agents you use</legend>
           <div class="chips">
-            <label><input type="checkbox" name="agents" value="claude-code"><span>Claude Code</span></label>
-            <label><input type="checkbox" name="agents" value="cursor"><span>Cursor</span></label>
-            <label><input type="checkbox" name="agents" value="codex"><span>Codex</span></label>
-            <label><input type="checkbox" name="agents" value="copilot"><span>Copilot</span></label>
-            <label><input type="checkbox" name="agents" value="gemini-cli"><span>Gemini CLI</span></label>
-            <label><input type="checkbox" name="agents" value="antigravity"><span>Antigravity</span></label>
-            <label><input type="checkbox" name="agents" value="other"><span>Other</span></label>
+            <label><input type="checkbox" name="agents" value="claude-code"><span>claude-code</span></label>
+            <label><input type="checkbox" name="agents" value="cursor"><span>cursor</span></label>
+            <label><input type="checkbox" name="agents" value="codex"><span>codex</span></label>
+            <label><input type="checkbox" name="agents" value="copilot"><span>copilot</span></label>
+            <label><input type="checkbox" name="agents" value="gemini-cli"><span>gemini-cli</span></label>
+            <label><input type="checkbox" name="agents" value="antigravity"><span>antigravity</span></label>
+            <label><input type="checkbox" name="agents" value="other"><span>other</span></label>
           </div>
         </fieldset>
         <div class="hp" aria-hidden="true"><label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
         <p class="err full" id="err" role="alert" hidden></p>
         <button type="submit" class="go" id="go">Get my setup line</button>
       </form>
-      <p class="fine">We see your name, email, the agents you picked, and for each action that was blocked or sent for
-        approval: the program (e.g. "rm"), the rule and what happened. Never your commands, files or prompts.
-        For a team? <a href="/team">Tell us</a>.</p>
+      <p class="fine">Already signed up? Fill in the same email: the link takes you back to your setup line.<br>
+        We see your name, email, the agents you picked, and for each action that was blocked or sent for approval:
+        the program (e.g. <span class="mono">rm</span>), the rule and what happened. Never your commands, files or prompts.</p>
     </section>
   </div>
-  <footer><span>© Squidbrake</span><a class="small" style="color:inherit" href="https://github.com/batrapulkit/squidbrake">Open source</a></footer>
+
+  <div class="steps">
+    <div><span class="n">01</span><h3>Sign in with your email</h3><p>One link, no password. It proves the address is yours.</p></div>
+    <div><span class="n">02</span><h3>Paste one line</h3><p>Windows or Mac. It installs Squidbrake and connects Claude Code, Cursor, Codex and more.</p></div>
+    <div><span class="n">03</span><h3>Work as usual</h3><p>Approve the risky steps from the dashboard, your phone or Slack.</p></div>
+  </div>
+  <footer><span>© Squidbrake · runs on your computer</span><span><a href="https://squidbrake.com/security.html">Security</a> · <a href="https://github.com/batrapulkit/squidbrake">Open source</a></span></footer>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
 const CONFIG = __CONFIG__;   // filled in by the server: { supabase_url, supabase_key } (both empty = no email sign-in)
+const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let brakeFlash = () => {};
 
-// ---------------------------------------------------------------- the scene: a stream of agent actions, and the brake
+// ---------------------------------------------------------------- the scene: tool calls stream through the brake band
 (function scene() {
   if (!window.THREE) return;
   const canvas = document.getElementById("scene");
   let renderer;
-  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false }); } catch { return; }
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true }); } catch { return; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setClearColor(0x07070a, 1);
+  renderer.setClearColor(0x000000, 0);
   const world = new THREE.Scene();
-  world.fog = new THREE.Fog(0x07070a, 9, 26);
-  const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
-  camera.position.set(-2.2, 1.6, 11);
+  world.fog = new THREE.Fog(0xEAEFE7, 12, 30);
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+  world.add(new THREE.HemisphereLight(0xffffff, 0xC9D2C5, 0.95));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(-4, 8, 6); world.add(sun);
 
-  const N = window.innerWidth < 700 ? 260 : 520, BRAKE_X = 0.6, R = 3.1;
-  const WHITE = new THREE.Color(0xe4e4e7), AMBER = new THREE.Color(0xf97316), RED = new THREE.Color(0xef4444);
-  const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.055, 10, 10),
-                                       new THREE.MeshBasicMaterial({ color: 0xffffff }), N);
-  world.add(mesh);
+  const N = innerWidth < 700 ? 120 : 220, BRAKE_X = 0.6, R = 2.4;
+  const IDLE = new THREE.Color(0x8A968D), GO = new THREE.Color(0x237447), HOLD = new THREE.Color(0xC77A1E), STOP = new THREE.Color(0xC0301C);
+  // a tool call: a small pill, like the verdict cards
+  const pillGeo = new THREE.SphereGeometry(0.075, 14, 10); pillGeo.scale(2.4, 1, 1);
+  const pills = new THREE.InstancedMesh(pillGeo, new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.05 }), N);
+  world.add(pills);
   const P = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3();
+  const color = (i, c) => { pills.setColorAt(i, c); pills.instanceColor.needsUpdate = true; };
   const spawn = (p, anywhere) => {
-    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * R;
+    const a = Math.random() * Math.PI * 2, r = 0.25 + Math.sqrt(Math.random()) * (R - 0.55);
     const roll = Math.random();
-    Object.assign(p, { x: anywhere ? -13 + Math.random() * 26 : -13 - Math.random() * 4, y: Math.sin(a) * r, z: Math.cos(a) * r,
-      speed: 2.2 + Math.random() * 2.4, kind: roll < 0.07 ? "block" : roll < 0.14 ? "hold" : "pass", t: 0, size: 1,
+    Object.assign(p, { x: anywhere ? -14 + Math.random() * 13 : -14 - Math.random() * 5, y: Math.sin(a) * r, z: Math.cos(a) * r,
+      speed: 1.6 + Math.random() * 1.8, kind: roll < 0.08 ? "stop" : roll < 0.17 ? "hold" : "go", t: 0, size: 1, checked: false,
       phase: Math.random() * 6.28 });
-    if (anywhere && p.kind !== "pass" && p.x > BRAKE_X) p.x = -13 + Math.random() * 12;
   };
-  for (let i = 0; i < N; i++) { const p = {}; spawn(p, true); P.push(p); mesh.setColorAt(i, p.kind === "pass" ? WHITE : p.kind === "hold" ? AMBER : RED); }
+  for (let i = 0; i < N; i++) { const p = {}; spawn(p, true); P.push(p); pills.setColorAt(i, IDLE); }
 
-  // the brake: a ring the stream passes through, and a faint disc that flashes when something is stopped
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 0.35, 0.035, 12, 120),
-                              new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.9 }));
-  ring.rotation.y = Math.PI / 2; ring.position.x = BRAKE_X; world.add(ring);
-  const halo = new THREE.Mesh(new THREE.TorusGeometry(R + 0.35, 0.16, 12, 120),
-                              new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.08 }));
-  halo.rotation.y = Math.PI / 2; halo.position.x = BRAKE_X; world.add(halo);
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(R + 0.3, 64),
-                              new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.03, side: THREE.DoubleSide }));
-  disc.rotation.y = Math.PI / 2; disc.position.x = BRAKE_X; world.add(disc);
-  // faint guide lines along the stream, for depth
-  const lines = new THREE.Group();
-  for (let i = 0; i < 18; i++) {
-    const a = (i / 18) * Math.PI * 2;
-    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-14, Math.sin(a) * (R + 0.35), Math.cos(a) * (R + 0.35)),
-                                                       new THREE.Vector3(14, Math.sin(a) * (R + 0.35), Math.cos(a) * (R + 0.35))]);
-    lines.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.035 })));
+  // the brake: the orange band from the logo, with its status light
+  const band = new THREE.Mesh(new THREE.TorusGeometry(R, 0.2, 24, 160),
+                              new THREE.MeshStandardMaterial({ color: 0xF2622E, roughness: 0.35, metalness: 0.1 }));
+  band.rotation.y = Math.PI / 2; band.position.x = BRAKE_X; world.add(band);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(R + 0.24, 0.035, 12, 160),
+                             new THREE.MeshStandardMaterial({ color: 0x1E2A23, roughness: 0.6 }));
+  rim.rotation.y = Math.PI / 2; rim.position.x = BRAKE_X; world.add(rim);
+  const light = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), new THREE.MeshBasicMaterial({ color: 0x2FD574 }));
+  light.position.set(BRAKE_X - 0.22, R * 0.62, R * 0.62); world.add(light);
+  const glow = new THREE.Mesh(new THREE.CircleGeometry(R - 0.15, 64),
+                              new THREE.MeshBasicMaterial({ color: 0xC0301C, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  glow.rotation.y = Math.PI / 2; glow.position.x = BRAKE_X; world.add(glow);
+  // the lane the calls travel in: faint guide rails
+  const rails = new THREE.Group();
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2, y = Math.sin(a) * R, z = Math.cos(a) * R;
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-16, y, z), new THREE.Vector3(16, y, z)]);
+    rails.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x1E2A23, transparent: true, opacity: 0.06 })));
   }
-  world.add(lines);
+  world.add(rails);
+  // a soft shadow under the band
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshBasicMaterial({ color: 0x1E2A23, transparent: true, opacity: 0.07, depthWrite: false }));
+  shadow.rotation.x = -Math.PI / 2; shadow.scale.set(1.0, 2.8, 1); shadow.position.set(BRAKE_X, -R - 0.7, 0); world.add(shadow);
 
-  let flash = 0, mx = 0, my = 0;
+  let flash = 0, flashColor = STOP, mx = 0, my = 0;
+  brakeFlash = (kind) => { flash = 1; flashColor = kind === "hold" ? HOLD : STOP; };
   addEventListener("pointermove", (e) => { mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5; });
+  const stage = canvas.parentElement;
+  let narrow = false;
   const resize = () => {
-    renderer.setSize(innerWidth, innerHeight, false);
-    camera.aspect = innerWidth / innerHeight;
-    camera.position.x = innerWidth < 900 ? -4.5 : -2.2;    // seen at an angle, so the brake reads as a ring, not a line
+    const w = stage.clientWidth, h = stage.clientHeight;
+    narrow = w < 560;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    camera.position.set(narrow ? -9.5 : -8, 2, narrow ? 14 : 12);
   };
-  addEventListener("resize", resize); resize();
+  new ResizeObserver(resize).observe(stage); resize();
 
-  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let last = performance.now(), running = true;
   const step = (now) => {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     for (let i = 0; i < N; i++) {
       const p = P[i];
-      if (p.kind !== "pass" && p.x >= BRAKE_X - 0.12) {
-        // stopped at the brake: a block fades out, a hold waits, then is let through
-        if (p.t === 0) flash = Math.min(1, flash + (p.kind === "block" ? 0.55 : 0.3));
-        p.t += dt; p.x = BRAKE_X - 0.12;
-        if (p.kind === "block") { p.size = Math.max(0, 1.6 - p.t * 0.9); if (p.t > 1.8) spawn(p); }
-        else { p.size = 1.25 + Math.sin(p.t * 9) * 0.25; if (p.t > 1.6) { p.kind = "pass"; p.size = 1; p.x = BRAKE_X + 0.05;
-                 mesh.setColorAt(i, WHITE); mesh.instanceColor.needsUpdate = true; } }
+      if (!p.checked && p.x >= BRAKE_X - 0.25) {
+        if (p.kind === "go") { p.checked = true; color(i, GO); }
+        else {
+          if (p.t === 0) { color(i, p.kind === "hold" ? HOLD : STOP); if (Math.random() < 0.35) brakeFlash(p.kind); }
+          p.t += dt; p.x = BRAKE_X - 0.25;
+          if (p.kind === "stop") { p.size = Math.max(0, 1.3 - p.t * 0.8); if (p.t > 1.7) { spawn(p); color(i, IDLE); } }
+          else { p.size = 1.15 + Math.sin(p.t * 8) * 0.18; if (p.t > 1.8) { p.checked = true; p.size = 1; color(i, GO); } }
+        }
       } else {
         p.x += p.speed * dt;
-        if (p.x > 14) { spawn(p); mesh.setColorAt(i, p.kind === "pass" ? WHITE : p.kind === "hold" ? AMBER : RED); mesh.instanceColor.needsUpdate = true; }
+        if (p.x > 15) { spawn(p); color(i, IDLE); }
       }
-      const wob = Math.sin(now / 900 + p.phase) * 0.06;
-      v.set(p.x, p.y + wob, p.z); s.setScalar(p.size);
-      m.compose(v, q, s); mesh.setMatrixAt(i, m);
+      v.set(p.x, p.y + Math.sin(now / 1000 + p.phase) * 0.05, p.z); s.setScalar(p.size);
+      m.compose(v, q, s); pills.setMatrixAt(i, m);
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    flash *= 0.94;
-    disc.material.opacity = 0.03 + flash * 0.12; halo.material.opacity = 0.08 + flash * 0.3;
-    ring.material.opacity = 0.75 + flash * 0.25;
-    lines.rotation.x += dt * 0.03;
-    camera.position.y += ((1.6 - my * 1.2) - camera.position.y) * 0.04;
-    camera.lookAt(BRAKE_X + mx * 1.5, 0, 0);
+    pills.instanceMatrix.needsUpdate = true;
+    flash *= 0.93;
+    glow.material.color.copy(flashColor); glow.material.opacity = flash * 0.14;
+    light.material.color.setHex(flash > 0.25 ? (flashColor === HOLD ? 0xE0A040 : 0xE5484D) : 0x2FD574);
+    band.rotation.x = Math.sin(now / 4000) * 0.05;
+    // seen from the side and a little ahead, so the band reads as a ring and the lane runs across the stage
+    const cx = narrow ? -9.5 : -8;
+    camera.position.x += ((cx + mx * 0.8) - camera.position.x) * 0.05;
+    camera.position.y += ((2 - my * 0.8) - camera.position.y) * 0.05;
+    camera.position.z = narrow ? 14 : 12;
+    camera.lookAt(narrow ? BRAKE_X + 1 : BRAKE_X + 4, narrow ? -2.2 : -0.3, 0);   // narrow: the card sits low, so the ring goes up
     renderer.render(world, camera);
   };
   const loop = (now) => { if (!running) return; step(now); requestAnimationFrame(loop); };
-  if (still) { for (let k = 0; k < 90; k++) step(last + 16 * k); }
+  if (still) { for (let k = 0; k < 120; k++) step(last + 16 * k); }
   else requestAnimationFrame(loop);
   document.addEventListener("visibilitychange", () => {
     if (still) return;
     running = !document.hidden;
     if (running) { last = performance.now(); requestAnimationFrame(loop); }
   });
+})();
+
+// ---------------------------------------------------------------- the live verdict card (examples, using the shipped rules)
+(function feed() {
+  const calls = [
+    { tool: "Bash", what: "Run the tests", cmd: "npm test", v: "go", rule: "allow-coding-work", ms: 4 },
+    { tool: "Bash", what: "Clean the home folder", cmd: "rm -rf ~/", v: "stop", rule: "block-destructive-shell", ms: 6 },
+    { tool: "Read", what: "Read the API keys", cmd: ".env.production", v: "stop", rule: "block-secret-files", ms: 3 },
+    { tool: "Bash", what: "Push the fix", cmd: "git push --force origin main", v: "hold", rule: "approve-git-push", ms: 5 },
+    { tool: "Edit", what: "Fix the date bug", cmd: "src/billing/invoice.ts", v: "go", rule: "allow-coding-work", ms: 4 },
+    { tool: "mcp__postgres", what: "Tidy old tables", cmd: "DROP TABLE customers;", v: "stop", rule: "block-sql-drop", ms: 7 },
+    { tool: "mcp__stripe", what: "Refund the order", cmd: "refunds.create amount=4200", v: "hold", rule: "approve-refunds", ms: 8 },
+    { tool: "Grep", what: "Find the failing import", cmd: "grep -rn 'parseDate' src/", v: "go", rule: "allow-reads", ms: 3 },
+  ];
+  const label = { go: ["✓", "Allowed", "v-go"], hold: ["…", "Waits for you", "v-hold"], stop: ["✕", "Blocked", "v-stop"] };
+  const el = (id) => document.getElementById(id), card = el("feed");
+  let i = 0;
+  const show = () => {
+    const c = calls[i % calls.length];
+    el("fN").textContent = String((i % 99) + 1).padStart(2, "0");
+    el("fTool").textContent = c.tool; el("fMs").textContent = `${c.ms} ms`;
+    el("fWhat").textContent = c.what; el("fCmd").textContent = c.cmd; el("fRule").textContent = c.rule;
+    const [icon, text, cls] = label[c.v];
+    el("fV").className = `verdict ${cls}`; el("fV").innerHTML = `<i>${icon}</i> ${text}`;
+    if (c.v !== "go") brakeFlash(c.v);
+  };
+  if (still) return;
+  setInterval(() => {
+    card.classList.add("swap");
+    setTimeout(() => { i++; show(); card.classList.remove("swap"); }, 260);
+  }, 2600);
 })();
 
 // ---------------------------------------------------------------- sign-up
