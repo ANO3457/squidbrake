@@ -65,6 +65,7 @@ def start(p):
     if existing == "false":
         docker("start", name)
     if existing:
+        give_license(name, p)
         api("/v1/admin/provisioned", {"code": p["code"], "state": "running"})
         return
     log("starting", name)
@@ -73,8 +74,10 @@ def start(p):
            "--label", "squidbrake.hosted=1", "--label", f"squidbrake.pilot={p['code']}",
            "-v", f"{name}:/app/data", "-e", f"PUBLIC_URL={p['dashboard']}", "-e", "FORWARDED_ALLOW_IPS=*",
            "-e", "SQUIDBRAKE_PILOT_INTERVAL=120",
-           # a free signup: one person, and after its free days it records but doesn't block (server.py PLAN)
-           *(["-e", f"SQUIDBRAKE_PLAN={p['plan']}", "-e", f"SQUIDBRAKE_TRIAL_ENDS={p['trial_ends']}"] if p.get("plan") else []),
+           # a free signup: one person, and after its free days it records but doesn't block (server.py PLAN). A Team
+           # trial is a license that ends with the trial instead: its Team features stop, blocking goes on
+           *(["-e", f"SQUIDBRAKE_PLAN={p['plan']}", "-e", f"SQUIDBRAKE_TRIAL_ENDS={p['trial_ends']}"]
+             if p.get("plan") == "free" else []),
            "--log-opt", "max-size=20m", "--log-opt", "max-file=3", IMAGE)
     keys = {}
     for _ in range(60):                       # the first start prints the admin and agent keys once
@@ -85,9 +88,20 @@ def start(p):
     else:
         raise RuntimeError("the gateway didn't print its keys: " + docker("logs", "--tail", "20", name, check=False)[-300:])
     docker("exec", name, "python", "server.py", "pilot", "join", p["code"], "--server", PILOT_SERVER, "--yes")
+    give_license(name, p)
     api("/v1/admin/provisioned", {"code": p["code"], "state": "running",
                                   "admin_key": keys["admin"], "agent_key": keys["agent"]})
     log("running", name, p["dashboard"])
+
+
+_licensed: dict[str, str] = {}
+
+
+def give_license(name, p):
+    """A hosted gateway has the Team plan: its license goes into its data folder (once, and again when renewed)."""
+    if p.get("license") and _licensed.get(name) != p["license"]:
+        docker("exec", name, "python", "server.py", "license", "set", p["license"], check=False)
+        _licensed[name] = p["license"]
 
 
 def remove(p):
