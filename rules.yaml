@@ -212,7 +212,9 @@ rules:
     reason: Changes an AI agent's own settings, hooks or MCP servers, Squidbrake itself, a secrets file, or code that runs at login
     match:
       name: ["Edit", "Write", "MultiEdit", "NotebookEdit", "bash*", "powershell*", "shell*", "run_command*"]
-      input_regex: '(?i)\.(claude|cursor|codex|gemini|copilot|kiro|codeium|windsurf|squidbrake)[\\/]|mcp(_config)?\.json|claude_desktop_config\.json|\.vscode[\\/]+(mcp|tasks|settings)\.json|Code( - Insiders)?[\\/]+User[\\/]+settings\.json|\.env\b(?!\.?(example|sample|template))|\.ssh[\\/]|\.aws[\\/]|\.(npmrc|pypirc|netrc)\b|\.(bashrc|zshrc|bash_profile|zprofile|profile)\b|PowerShell_profile\.ps1|\.git[\\/]+hooks[\\/]|managed-settings\.json|(/etc/|ProgramData[\\/]+|Program Files[\\/]+|Application Support/)(ClaudeCode|claude-code|codex|gemini-cli|cursor|squidbrake|OpenAI)\b'
+      # an agent's own notes (Antigravity's brain/, Claude Code's plans/, todos/ and memory/) are markdown it writes on
+      # every task, not its setup: those .md files aren't held. Settings, hooks, CLAUDE.md, commands/ and agents/ still are.
+      input_regex: '(?i)\.(claude|cursor|codex|gemini|copilot|kiro|codeium|windsurf|squidbrake)[\\/](?![\\/]*(?:antigravity[\\/]+brain|plans|todos|projects[\\/]+[^"\\/]+[\\/]+memory)[\\/]+(?:(?!\.\.)[^"])*\.md")|mcp(_config)?\.json|claude_desktop_config\.json|\.vscode[\\/]+(mcp|tasks|settings)\.json|Code( - Insiders)?[\\/]+User[\\/]+settings\.json|\.env\b(?!\.?(example|sample|template))|\.ssh[\\/]|\.aws[\\/]|\.(npmrc|pypirc|netrc)\b|\.(bashrc|zshrc|bash_profile|zprofile|profile)\b|PowerShell_profile\.ps1|\.git[\\/]+hooks[\\/]|managed-settings\.json|(/etc/|ProgramData[\\/]+|Program Files[\\/]+|Application Support/)(ClaudeCode|claude-code|codex|gemini-cli|cursor|squidbrake|OpenAI)\b'
 
   # ---- looking is fine: reading, listing, searching run without asking (and are still recorded)
   - id: allow-reads

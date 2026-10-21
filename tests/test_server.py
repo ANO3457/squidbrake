@@ -1601,3 +1601,23 @@ def test_setup_rule_covers_vscode_settings():
     for path in held:
         assert rx.search(json.dumps({"file_path": path})), path
     assert not rx.search(json.dumps({"file_path": "src/config/settings.json"}))
+
+
+def test_setup_rule_leaves_agents_own_notes_alone():
+    """Antigravity's brain/*.md and Claude Code's plans/, todos/ and memory/ notes are written on every task: holding
+    them is approval fatigue. Settings, hooks, CLAUDE.md, commands/ and agents/ stay held, and so does `..` out of
+    a notes folder."""
+    import json
+    import re
+    import yaml
+    rules = yaml.safe_load((Path(__file__).resolve().parents[1] / "rules.yaml").read_text(encoding="utf-8"))["rules"]
+    rx = re.compile(next(r for r in rules if r["id"] == "approve-agent-setup-changes")["match"]["input_regex"])
+    held = lambda p: bool(rx.search(json.dumps({"file_path": p, "content": "x"})))
+    for note in [r"C:\Users\a\.gemini\antigravity\brain\abc\task.md", "/home/a/.gemini/antigravity/brain/x/walkthrough.md",
+                 "/home/a/.claude/plans/plan.md", r"C:\Users\a\.claude\projects\p\memory\notes.md", "/home/a/.claude/todos/t.md"]:
+        assert not held(note), note
+    for setup in ["/home/a/.claude/settings.json", ".claude/settings.local.json", "/home/a/.claude/CLAUDE.md",
+                  "/home/a/.claude/commands/deploy.md", "/home/a/.claude/agents/helper.md", "/home/a/.claude/plans/x.json",
+                  "/home/a/.claude/plans/../commands/evil.md", r"C:\Users\a\.claude\plans\..\commands\evil.md",
+                  r"C:\Users\a\.gemini\antigravity\mcp_config.json", r"C:\Users\a\.gemini\antigravity\brain\x\..\..\mcp_config.md"]:
+        assert held(setup), setup
