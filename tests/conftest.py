@@ -16,5 +16,7 @@ os.environ["SQUIDBRAKE_NO_INVENTORY"] = "1"
 
 # The Team plan's license (license.py): the tests check its gates on purpose (test_license.py); everywhere else the
 # Team features are on, whatever today's date is.
+import sys  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # plain `pytest` (CI) doesn't add the repo
 import license  # noqa: E402
 license.GRACE_UNTIL = "9999-12-31"
