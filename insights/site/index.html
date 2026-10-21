@@ -112,6 +112,8 @@ a{color:inherit}
 .hero-copy h1{font-weight:500;font-size:clamp(2.8rem,5.6vw,5.5rem);line-height:.9;letter-spacing:-0.058em;margin:0;text-wrap:balance}
 .hero-side .lede{margin:0 0 24px;font-size:1.1rem;line-height:1.5;color:var(--h-muted);max-width:38ch}
 .cta-row{display:flex;flex-wrap:wrap;gap:10px}
+.cta-pick{display:flex;flex-direction:column;gap:6px}
+.cta-pick span{font-size:.82rem;color:var(--h-muted)}
 .ph-badge{display:inline-block;margin-top:16px;line-height:0}.ph-badge img{max-width:100%;height:auto}
 .hero-controls{position:absolute;left:0;right:0;bottom:22px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;pointer-events:none}
 .hero-controls>*{pointer-events:auto}
@@ -333,6 +335,10 @@ section[id]{scroll-margin-top:60px}
 .oss-facts li{padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
 .oss-facts b{font-weight:500;letter-spacing:-0.02em}
 .oss-facts span{color:var(--muted);font-size:.88rem}
+.oss-facts.plans{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:900px){ .oss-facts.plans{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width:560px){ .oss-facts.plans{grid-template-columns:1fr} }
+.plans-more{margin:16px 0 0;font-size:.92rem;color:var(--muted)}
 .traction{margin:0 0 64px}
 .traction b{font-size:clamp(1.6rem,3vw,2.2rem);line-height:1.1;color:var(--ink)}
 .programs{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px 24px;font-weight:500}
@@ -719,8 +725,8 @@ section .fine code,.faq code{font:400 .92em var(--mono)}
         <p class="lede">Change control for AI agents. Everyday work runs on its own. When an agent wants to do something it can't take back, a teammate sees what it will change ("deletes 4,312 rows", "destroys the prod database") and says yes or no.</p>
         <p class="spec"><strong>5,000+ PyPI downloads.</strong></p>
         <div class="cta-row">
-          <a class="btn" href="/signup">Sign up free</a>
-          <a class="btn ghost" href="#demo" data-demo>Book a demo</a>
+          <div class="cta-pick"><a class="btn" href="/signup">Sign up free</a><span>Building with agents yourself</span></div>
+          <div class="cta-pick"><a class="btn ghost" href="#demo" data-demo>Book a demo</a><span>Security or platform team</span></div>
         </div>
         <a class="ph-badge" href="https://www.producthunt.com/products/squidbrake?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-squidbrake" target="_blank" rel="noopener noreferrer"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&amp;theme=dark&amp;t=1791704247916"><img alt="Squidbrake - Change control for AI agents: sign-off, undo and a record | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&amp;theme=light&amp;t=1791704247916"></picture></a>
         <p class="spec"><strong>The check takes 9 ms at p95.</strong> <span class="spec-more">Your model takes seconds to decide. The check is the cheap part.</span><span class="live" aria-hidden="true"><i></i>last check <b id="lastMs">4</b> ms</span></p>
@@ -757,7 +763,7 @@ section .fine code,.faq code{font:400 .92em var(--mono)}
     <div class="used-at">
       <p class="kicker">5,000+ downloads, including by engineers at</p>
       <ul aria-label="Companies whose engineers installed Squidbrake">
-        <li>HCLTech</li><li>Urban Company</li><li>World Wide Technology</li><li>Airbyte</li><li>Juniper Networks</li><li>Pax8</li><li>Capslock</li>
+        <li>HCLTech</li><li>World Wide Technology</li><li>Airbyte</li><li>Juniper Networks</li><li>Pax8</li><li>Capslock</li>
       </ul>
     </div>
     <div class="backed">
@@ -765,6 +771,13 @@ section .fine code,.faq code{font:400 .92em var(--mono)}
       <span>In Microsoft, OpenAI and Anthropic startup programs</span>
       <a href="about">Meet the team →</a>
     </div>
+    <ul class="oss-facts plans" aria-label="Plans and how it runs">
+      <li><b>Free, open source</b><span>Every rule, block and hold. Apache 2.0, self-hosted on your laptop, Docker or server.</span></li>
+      <li><b>Team, $499 a month</b><span>We host the dashboard. Team approvals on phone, Slack or email, and the audit export. 14 days free.</span></li>
+      <li><b>Business</b><span>Up to five teams, a monthly rules review and help before an audit. Priced with you.</span></li>
+      <li><b>Enterprise</b><span>Runs in your own cloud, set up with us. Security review and a named contact. SSO is on the roadmap.</span></li>
+    </ul>
+    <p class="plans-more"><a class="link" href="pricing">Compare plans</a> · Enterprise? <a class="link" href="#demo" data-demo>Talk to us</a></p>
   </section>
 
   <section id="problem" class="section-rule">
