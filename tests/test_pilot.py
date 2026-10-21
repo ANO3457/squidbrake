@@ -500,9 +500,11 @@ def test_signup_hosted_waits_for_you_to_approve_it(insights, monkeypatch):
 def test_one_website_serves_the_pages_and_the_old_address_sends_people_there(insights, monkeypatch):
     import app as insights_app
     for path, text in (("/", "Agents propose."), ("/pricing", "Start a 14-day trial"), ("/docs.html", "<html"),
-                       ("/security", "<html"), ("/llms.txt", "Squidbrake"), ("/assets/og.png", "")):
+                       ("/security", "<html"), ("/llms.txt", "Squidbrake"), ("/assets/og.png", ""),
+                       ("/benchmark", "14 of 15"), ("/robots.txt", "Sitemap:"), ("/sitemap.xml", "/benchmark</loc>")):
         r = insights.get(path)
         assert r.status_code == 200 and text in r.text, path
+    assert insights.get("/sitemap.xml").headers["content-type"].startswith("application/xml")
     assert 'href="/signup"' in insights.get("/").text and "pilots.squidbrake.com" not in insights.get("/").text
     assert insights.get("/nope").status_code == 404 and insights.get("/app.py").status_code == 404
     monkeypatch.setattr(insights_app, "PUBLIC_URL", "https://squidbrake.com")
