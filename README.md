@@ -12,7 +12,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/batrapulkit/squidbrake/badge)](https://scorecard.dev/viewer/?uri=github.com/batrapulkit/squidbrake)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](requirements.txt)
 [![MCP](https://img.shields.io/badge/MCP-compatible-8A2BE2.svg)](docs/install.md#2-connect-real-agents)
-[![Real incidents replayed: 13 of 15 stopped](https://img.shields.io/badge/real%20incidents%20replayed-13%20of%2015%20stopped-yellow.svg)](incidents/)
+[![Real incidents replayed: 14 of 15 stopped](https://img.shields.io/badge/real%20incidents%20replayed-14%20of%2015%20stopped-yellow.svg)](incidents/)
 [![Good first issues](https://img.shields.io/github/issues/batrapulkit/squidbrake/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/batrapulkit/squidbrake/labels/good%20first%20issue)
 
 <a href="https://www.producthunt.com/products/squidbrake?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-squidbrake" target="_blank" rel="noopener noreferrer"><img alt="Squidbrake - Change control for AI agents: sign-off, undo and a record | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&theme=light&t=1791704247916"></a>
@@ -163,13 +163,12 @@ The incidents and the session benchmark run in CI, so they can't quietly stop be
 
 - **Real incidents:** [incidents/](incidents/) replays 12 public AI-agent incidents against the shipped rules.
   - Examples: Replit's production database, the Railway volume deletion, GitHub MCP, Supabase MCP, CurXecute.
-  - **13 of 15 harmful actions are stopped.**
+  - **14 of 15 harmful actions are stopped.**
 - **Reported bypasses:** every way around Squidbrake that someone sent us is a test that must stay stopped on
   every release ([tests/test_reported_bypasses.py](tests/test_reported_bypasses.py)): **34 of 34 stopped**, and
   the everyday variants of each still run.
-  - The two incidents not stopped are listed and explained: a malicious MCP server adds a BCC inside itself, after
-    the check, and Copilot's edit to `.vscode/settings.json`, which the setup rule doesn't cover.
-- **Whole sessions:** in [bench/chains/](bench/chains/), Squidbrake stops 64 of 65 harmful steps and holds 3 of 41
+  - The one not stopped is listed and explained: a malicious MCP server adds a BCC inside itself, after the check.
+- **Whole sessions:** in [bench/chains/](bench/chains/), Squidbrake stops 65 of 66 harmful steps and holds 3 of 41
   routine ones. An allowlist stops 53 and holds 10.
 - **Other tools:** [bench/compare/](bench/compare/) runs the same steps through two other tools (dcg and Microsoft's
   Agent Governance Toolkit), plus everyday coding work. This one is run by hand, not in CI.

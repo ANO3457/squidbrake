@@ -1586,3 +1586,18 @@ def test_unattended_agent_example_policy(c, monkeypatch, tmp_path):
     d = c.post("/v1/events", headers=H, json={"name": "github.list_issues", "input": {"page": 3},
                                                "session_id": s, "source": "nightly-bot"}).json()
     assert d["decision"] == "deny" and d["rule_id"] == "sequence:runaway-loop" and "step limit" in d["reason"]
+
+
+def test_setup_rule_covers_vscode_settings():
+    """CVE-2025-53773: Copilot turned on its own auto-approve in VS Code's settings.json. The shipped setup rule holds
+    edits to it, the workspace one and the user one on every OS; an app's own settings.json stays everyday work."""
+    import json
+    import re
+    import yaml
+    rules = yaml.safe_load((Path(__file__).resolve().parents[1] / "rules.yaml").read_text(encoding="utf-8"))["rules"]
+    rx = re.compile(next(r for r in rules if r["id"] == "approve-agent-setup-changes")["match"]["input_regex"])
+    held = [".vscode/settings.json", r"C:\Users\a b\AppData\Roaming\Code\User\settings.json",
+            "/Users/a/Library/Application Support/Code/User/settings.json", "/home/a/.config/Code - Insiders/User/settings.json"]
+    for path in held:
+        assert rx.search(json.dumps({"file_path": path})), path
+    assert not rx.search(json.dumps({"file_path": "src/config/settings.json"}))
