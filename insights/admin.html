@@ -989,7 +989,8 @@ function overview(d, inv, asks) {
       <td><span class="pill ${cls}">${esc(label)}</span></td><td>${spark(p.daily, "var(--accent)", 96, 24)}</td>
       <td class="n act" style="--w:${Math.round(100 * p.week.events / maxA)}%">${z(p.week.events)}</td>
       <td class="n">${z(p.week.held)}</td><td class="n">${z(p.week.approved)}</td><td class="n">${z(p.week.rejected)}</td><td class="n">${z(p.week.timed_out)}</td>
-      <td class="n">${z(p.paused || 0)}</td><td>${esc(p.versions.length ? "v" + p.versions.join(", v") : "–")}</td><td>${agents}</td></tr>`;
+      <td class="n">${z(p.paused || 0)}</td><td>${esc(p.versions.length ? "v" + p.versions.join(", v") : "–")}</td><td>${agents}</td>
+      <td><button class="icon-btn" title="Remove this pilot" data-del="${esc(p.code)}" data-warn="${esc(deleteWarning(p))}">Remove</button></td></tr>`;
   };
   const sorted = [...pilots].sort((a, b) => b.week.events - a.week.events || (a.company > b.company ? 1 : -1));
 
@@ -1026,7 +1027,7 @@ function overview(d, inv, asks) {
     </div>
     <div class="ov-card"><h3>Pilots</h3><span class="sub">One row per pilot, this week, busiest first. The shaded bar in Actions is on one shared scale.</span>
       ${pilots.length ? `<div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Pilot</th><th>Status</th><th>14 days</th><th class="n">Actions</th><th class="n">Held</th>
-        <th class="n">Approved</th><th class="n">Rejected</th><th class="n">Timed out</th><th class="n">Emergency stops</th><th>Version</th><th>Agents (actions)</th></tr></thead>
+        <th class="n">Approved</th><th class="n">Rejected</th><th class="n">Timed out</th><th class="n">Emergency stops</th><th>Version</th><th>Agents (actions)</th><th></th></tr></thead>
         <tbody>${sorted.map(prow).join("")}</tbody></table></div>` : `<div class="sub">No pilots yet. Create one below.</div>`}</div>
   </section>`;
 }
