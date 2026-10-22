@@ -89,3 +89,47 @@ def test_a_healthy_running_gateway_gets_its_license_from_the_loop(monkeypatch):
     provision.tick()
     assert [c for c in calls if c[:1] == ("exec",)] == [("exec", "sbp-co4", "python", "server.py", "license", "set", "L4")]
     assert not any(c[0] == "run" for c in calls)              # not restarted
+
+
+def test_keys_that_dont_open_the_gateway_are_never_handed_out(monkeypatch):
+    """The founder sees the keys once: if the ones in the log don't open this gateway, nothing is reported as ready,
+    so the next tick recreates it instead of showing dead keys on the start page."""
+    calls, reports = fake(monkeypatch, [None])
+    real = provision.docker
+
+    def docker(*args, check=True):
+        if args[:1] == ("exec",) and provision.KEY_CHECK in args:
+            raise RuntimeError("docker exec (exit 3): 401")
+        return real(*args, check=check)
+    monkeypatch.setattr(provision, "docker", docker)
+    try:
+        provision.start({"code": "co-1", "subdomain": "co", "dashboard": "https://co.app.test", "keys_ready": False})
+        raise AssertionError("should have raised")
+    except RuntimeError as e:
+        assert "doesn't open it" in str(e)
+    assert not any(b and b.get("admin_key") for _, b in reports)
+
+
+def test_a_failing_join_doesnt_stop_the_dashboard(monkeypatch):
+    """Joining only shares usage counts: three failed tries are logged, and the gateway is still reported ready."""
+    calls, reports = fake(monkeypatch, [None])
+    real = provision.docker
+    monkeypatch.setattr(provision.time, "sleep", lambda s: None)
+
+    def docker(*args, check=True):
+        if args[:1] == ("exec",) and provision.JOIN in args:
+            raise RuntimeError("docker exec (exit 137): killed")
+        return real(*args, check=check)
+    monkeypatch.setattr(provision, "docker", docker)
+    provision.start({"code": "co-1", "subdomain": "co", "dashboard": "https://co.app.test", "keys_ready": False})
+    body = reports[-1][1]
+    assert body["state"] == "running" and body["admin_key"] == "gw_admin_AAAA"
+
+
+def test_the_snippets_run_on_python_38():
+    """They run inside the gateway, but the provisioner itself runs on the server's Python 3.8."""
+    import ast
+    for src in (provision.KEY_CHECK, provision.JOIN):
+        ast.parse(src, feature_version=(3, 8))
+    ast.parse((Path(__file__).resolve().parents[1] / "insights" / "provision.py").read_text(encoding="utf-8"),
+              feature_version=(3, 8))

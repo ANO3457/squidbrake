@@ -89,11 +89,53 @@ def start(p):
         time.sleep(1)
     else:
         raise RuntimeError("the gateway didn't print its keys: " + docker("logs", "--tail", "20", name, check=False)[-300:])
-    docker("exec", name, "python", "server.py", "pilot", "join", p["code"], "--server", PILOT_SERVER, "--yes")
+    # The founder gets these keys once: make sure they open this very gateway before saying it's ready. If not,
+    # this raises, keys_ready stays false, and the next tick recreates the gateway cleanly.
+    for label in ("admin", "agent"):
+        if not key_works(name, keys[label]):
+            raise RuntimeError(f"the {label} key from the gateway's log doesn't open it")
+    join(name, p["code"])
     give_license(name, p)
     api("/v1/admin/provisioned", {"code": p["code"], "state": "running",
                                   "admin_key": keys["admin"], "agent_key": keys["agent"]})
     log("running", name, p["dashboard"])
+
+
+# Small Python snippets run inside the gateway's container: they don't import server.py, so they stay well under
+# the container's memory cap next to the running gateway (a full `server.py` CLI could be killed there).
+KEY_CHECK = ("import sys, time, urllib.request, urllib.error\n"
+             "for _ in range(30):\n"
+             "    try:\n"
+             "        urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8080/v1/me',"
+             " headers={'X-Gateway-Key': sys.argv[1]}), timeout=5); sys.exit(0)\n"
+             "    except urllib.error.HTTPError as e:\n"
+             "        sys.exit(3 if e.code == 401 else 4)\n"
+             "    except Exception:\n"
+             "        time.sleep(2)\n"
+             "sys.exit(5)\n")
+JOIN = ("import sys\nfrom pathlib import Path\nimport pilot\nfrom squidbrake import __version__\n"
+        "sys.exit(pilot.join(Path('/app/data'), sys.argv[1], sys.argv[2], True, __version__))\n")
+
+
+def key_works(name, key):
+    """True when the key opens the gateway (asked from inside its container, once it answers)."""
+    try:
+        docker("exec", name, "python", "-c", KEY_CHECK, key)
+        return True
+    except RuntimeError:
+        return False
+
+
+def join(name, code):
+    """Share usage counts (pilot.py). Only counts depend on it, never the dashboard: tried 3 times, then left."""
+    for attempt in range(3):
+        try:
+            docker("exec", name, "python", "-c", JOIN, code, PILOT_SERVER)
+            return True
+        except RuntimeError as e:
+            log("pilot join failed", name, str(e)[-200:])
+            time.sleep(5 * (attempt + 1))
+    return False
 
 
 _licensed = {}   # gateway name -> the license it was given (the server runs an older Python)
