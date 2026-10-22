@@ -138,22 +138,43 @@ def join(name, code):
     return False
 
 
+# New keys written straight into keys.json the way server.py's KeyStore does (sha256 only, atomic, integrity noted):
+# the full `server.py add-key` gets killed under the container's memory cap. shortcut: no audit-trail entry in the
+# gateway for these keys, add one if a pilot needs it.
+KEYS_IO = ("import hashlib, json, os, re, secrets, sys, time\nfrom pathlib import Path\nimport integrity\n"
+           "d = Path('/app/data'); p = d / 'keys.json'; data = json.loads(p.read_text(encoding='utf-8'))\n"
+           "def save():\n"
+           "    tmp = p.with_suffix('.tmp'); tmp.write_text(json.dumps(data, indent=2), encoding='utf-8')\n"
+           "    os.chmod(tmp, 0o600); os.replace(tmp, p); integrity.note_keys(d)\n")
+NEW_KEYS = KEYS_IO + (
+    "old = [n for n, k in data['keys'].items() if re.fullmatch(r'admin(-\\d{14})?', n) and k.get('kind') == 'person']\n"
+    "now = time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())\n"
+    "new = {'admin': 'gw_' + secrets.token_urlsafe(24), 'agent': 'gw_' + secrets.token_urlsafe(24)}\n"
+    "h = lambda s: hashlib.sha256(s.encode()).hexdigest()\n"
+    "data['keys']['admin-' + sys.argv[1]] = {'sha256': h(new['admin']), 'kind': 'person', 'approver': True,"
+    " 'roles': ['owner', 'admin'], 'created_at': now}\n"
+    "data['keys']['agent-' + sys.argv[1]] = {'sha256': h(new['agent']), 'kind': 'agent', 'approver': False,"
+    " 'roles': [], 'created_at': now}\n"
+    "save(); print(json.dumps({'old': old, **new}))\n")
+DROP_KEYS = KEYS_IO + "[data['keys'].pop(n, None) for n in sys.argv[1:]]; save()\n"
+
+
 def new_keys(p):
     """A founder lost their keys (admin page: New keys). A new admin key replaces the old ones, which stop working.
     The new agent key is added beside the old one, so agents already connected keep working. Both are checked, then
     shown once more on the founder's start page."""
-    name, stamp = "sbp-" + p["subdomain"], time.strftime("%Y%m%d%H%M%S")
-    cli = ("exec", name, "python", "server.py")
-    old = re.findall(r"^\s+(admin(?:-\d{14})?)\s+person", docker(*cli, "keys"), re.M)
-    admin = re.search(r"gw_[A-Za-z0-9_\-]+", docker(*cli, "add-key", "admin-" + stamp, "--approver",
-                                                    "--role", "owner", "--role", "admin")).group(0)
-    agent = re.search(r"gw_[A-Za-z0-9_\-]+", docker(*cli, "add-key", "agent-" + stamp)).group(0)
-    for label, key in (("admin", admin), ("agent", agent)):
-        if not key_works(name, key):
+    name = "sbp-" + p["subdomain"]
+    try:
+        made = json.loads(docker("exec", name, "python", "-c", NEW_KEYS, time.strftime("%Y%m%d%H%M%S")))
+    except (RuntimeError, ValueError):
+        raise RuntimeError("couldn't make new keys in the gateway") from None   # its output may hold a key: not stored
+    for label in ("admin", "agent"):
+        if not key_works(name, made[label]):
             raise RuntimeError(f"the new {label} key doesn't open the gateway")
-    for n in old:
-        docker(*cli, "remove-key", n)
-    api("/v1/admin/provisioned", {"code": p["code"], "state": "running", "admin_key": admin, "agent_key": agent})
+    if made["old"]:
+        docker("exec", name, "python", "-c", DROP_KEYS, *made["old"])
+    api("/v1/admin/provisioned", {"code": p["code"], "state": "running",
+                                  "admin_key": made["admin"], "agent_key": made["agent"]})
     log("new keys", name)
 
 

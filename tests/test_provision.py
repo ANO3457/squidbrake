@@ -137,34 +137,46 @@ def test_the_snippets_run_on_python_38():
               feature_version=(3, 8))
 
 
-def test_lost_keys_get_new_ones_and_connected_agents_keep_working(monkeypatch):
-    calls, reports = [], []
-    listing = ("Keys (from /app/data/keys.json):\n  admin                  person  can approve  owner,admin      x\n"
-               "  agent                  agent   agent        -                x\n  alice                  person  can view     -  x\n")
+def test_lost_keys_get_new_ones_and_connected_agents_keep_working(tmp_path, monkeypatch):
+    """The real snippets, on a real keys.json: new admin and agent keys open the gateway, the old admin key stops."""
+    import subprocess
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root))
+    import server
+    store = server.KeyStore(tmp_path / "keys.json")
+    first = store.ensure_initialized()
+    alice = store.add("alice", approver=True)
+    reports = []
 
     def docker(*args, check=True):
-        calls.append(args)
-        if args[4:5] == ("keys",):
-            return listing
-        if args[4:5] == ("add-key",):
-            return f"\n  Key for '{args[5]}' (...):\n\n    gw_{args[5][:5]}_NEW\n"
-        return ""
+        assert args[:4] == ("exec", "sbp-co", "python", "-c")
+        code = args[4].replace("/app/data", str(tmp_path).replace("\\", "/"))
+        out = subprocess.run([sys.executable, "-c", code, *args[5:]], capture_output=True, text=True, cwd=root)
+        assert out.returncode == 0, out.stderr
+        return out.stdout.strip()
     monkeypatch.setattr(provision, "docker", docker)
+    monkeypatch.setattr(provision, "key_works", lambda name, key: store.identify(key) is not None)
     monkeypatch.setattr(provision, "api", lambda path, body=None: reports.append(body) or {})
     provision.new_keys({"code": "co-1", "subdomain": "co"})
-    removed = [c[5] for c in calls if c[4:5] == ("remove-key",)]
-    assert removed == ["admin"]                           # the lost admin key stops working; the agent's and alice's stay
-    added = [c for c in calls if c[4:5] == ("add-key",)]
-    assert "--approver" in added[0] and "owner" in added[0] and "--approver" not in added[1]
-    assert calls.index(added[1]) < calls.index(next(c for c in calls if c[4:5] == ("remove-key",)))   # new before old goes
-    assert reports[-1] == {"code": "co-1", "state": "running", "admin_key": "gw_admin_NEW", "agent_key": "gw_agent_NEW"}
+    got = reports[-1]
+    assert got["state"] == "running" and store.is_owner(store.identify(got["admin_key"]))
+    assert not store.is_person(store.identify(got["agent_key"]))
+    assert store.identify(first["admin"]) is None                     # the lost admin key stops working
+    assert store.identify(first["agent"]) == "agent" and store.identify(alice) == "alice"   # the rest keep working
 
 
-def test_new_keys_that_do_not_open_the_gateway_are_never_handed_out(monkeypatch):
+def test_new_keys_never_end_up_in_an_error_or_with_a_founder_unless_they_work(monkeypatch):
     reports = []
-    monkeypatch.setattr(provision, "docker", lambda *a, check=True: "gw_x_NEW" if a[4:5] == ("add-key",) else "")
-    monkeypatch.setattr(provision, "key_works", lambda name, key: False)
     monkeypatch.setattr(provision, "api", lambda path, body=None: reports.append(body) or {})
+
+    def killed(*a, check=True):
+        raise RuntimeError('docker exec (exit 137): ...{"old": [], "admin": "gw_SECRET"')
+    monkeypatch.setattr(provision, "docker", killed)
+    with pytest.raises(RuntimeError) as e:
+        provision.new_keys({"code": "co-1", "subdomain": "co"})
+    assert "gw_" not in str(e.value)
+    monkeypatch.setattr(provision, "docker", lambda *a, check=True: '{"old": ["admin"], "admin": "gw_a", "agent": "gw_b"}')
+    monkeypatch.setattr(provision, "key_works", lambda name, key: False)
     with pytest.raises(RuntimeError):
         provision.new_keys({"code": "co-1", "subdomain": "co"})
     assert reports == []
