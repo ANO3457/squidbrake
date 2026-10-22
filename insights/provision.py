@@ -138,6 +138,25 @@ def join(name, code):
     return False
 
 
+def new_keys(p):
+    """A founder lost their keys (admin page: New keys). A new admin key replaces the old ones, which stop working.
+    The new agent key is added beside the old one, so agents already connected keep working. Both are checked, then
+    shown once more on the founder's start page."""
+    name, stamp = "sbp-" + p["subdomain"], time.strftime("%Y%m%d%H%M%S")
+    cli = ("exec", name, "python", "server.py")
+    old = re.findall(r"^\s+(admin(?:-\d{14})?)\s+person", docker(*cli, "keys"), re.M)
+    admin = re.search(r"gw_[A-Za-z0-9_\-]+", docker(*cli, "add-key", "admin-" + stamp, "--approver",
+                                                    "--role", "owner", "--role", "admin")).group(0)
+    agent = re.search(r"gw_[A-Za-z0-9_\-]+", docker(*cli, "add-key", "agent-" + stamp)).group(0)
+    for label, key in (("admin", admin), ("agent", agent)):
+        if not key_works(name, key):
+            raise RuntimeError(f"the new {label} key doesn't open the gateway")
+    for n in old:
+        docker(*cli, "remove-key", n)
+    api("/v1/admin/provisioned", {"code": p["code"], "state": "running", "admin_key": admin, "agent_key": agent})
+    log("new keys", name)
+
+
 _licensed = {}   # gateway name -> the license it was given (the server runs an older Python)
 
 
@@ -172,6 +191,8 @@ def tick():
             elif p["state"] in ("requested", "failed") or (p["state"] == "running" and (
                     p.get("keys_ready") is False or state("sbp-" + p["subdomain"]) != "true")):
                 start(p)
+            elif p["state"] == "running" and p.get("rekey"):
+                new_keys(p)
             elif p["state"] == "running":            # a healthy gateway: only its license, when new or renewed
                 give_license("sbp-" + p["subdomain"], p)
         except Exception as e:

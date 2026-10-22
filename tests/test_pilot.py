@@ -146,6 +146,16 @@ def test_hosted_pilot_lifecycle(insights):
     assert insights.post(f"/v1/pilot/{code}/keys").json()["agent_key"] == "gw_agent_new"
     insights.post("/v1/admin/provisioned", headers=admin, json={"code": code, "state": "running"})   # a plain tick
     assert insights.post(f"/v1/pilot/{code}/keys").status_code == 409
+    # lost keys: the admin asks for new ones, the provisioner sees it until new keys arrive, the page shows them once
+    assert insights.post(f"/v1/admin/pilots/{code}/new-keys").status_code == 401
+    assert insights.post(f"/v1/admin/pilots/{code}/new-keys", headers=admin).status_code == 200
+    assert any(p["code"] == code and p["rekey"] is True for p in insights.get("/v1/admin/provision", headers=admin).json()["pilots"])
+    insights.post("/v1/admin/provisioned", headers=admin, json={"code": code, "state": "running"})   # a tick, no keys yet
+    assert any(p["code"] == code and p["rekey"] is True for p in insights.get("/v1/admin/provision", headers=admin).json()["pilots"])
+    insights.post("/v1/admin/provisioned", headers=admin, json={"code": code, "state": "running",
+                                                                "admin_key": "gw_admin_3", "agent_key": "gw_agent_3"})
+    assert any(p["code"] == code and p["rekey"] is False for p in insights.get("/v1/admin/provision", headers=admin).json()["pilots"])
+    assert insights.post(f"/v1/pilot/{code}/keys").json()["admin_key"] == "gw_admin_3"
     # slots are limited (HOSTED_MAX=2 here)
     insights.post("/v1/admin/pilots", headers=admin, json={"company": "Second", "hosted": True})
     assert insights.post("/v1/admin/pilots", headers=admin, json={"company": "Third", "hosted": True}).status_code == 409

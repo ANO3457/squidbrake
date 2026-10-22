@@ -119,7 +119,9 @@ with db() as _c:
                         # self-serve signups (/signup): who, and which agents they said they use
                         ("email", "TEXT"), ("uses_agents", "TEXT"), ("plan", "TEXT"), ("trial_ends", "TEXT"),
                         # Stripe (/v1/stripe/webhook): who pays, and one-time payments such as a paid pilot
-                        ("stripe_customer", "TEXT"), ("paid_once", "INTEGER NOT NULL DEFAULT 0")):
+                        ("stripe_customer", "TEXT"), ("paid_once", "INTEGER NOT NULL DEFAULT 0"),
+                        # New keys asked for (a founder lost theirs): provision.py makes them, then this goes back to 0
+                        ("rekey", "INTEGER NOT NULL DEFAULT 0")):
         if _col not in _have:
             _c.execute(f"ALTER TABLE pilots ADD COLUMN {_col} {_type}")
 
@@ -571,16 +573,25 @@ def approve_hosted(code: str):
     return {"ok": True}
 
 
+@app.post("/v1/admin/pilots/{code}/new-keys", dependencies=[Depends(admin)])
+def new_keys(code: str):
+    """A founder lost their keys: provision.py makes new ones, and their start page shows them once more."""
+    with _lock, db() as c:
+        if not c.execute("UPDATE pilots SET rekey=1 WHERE code=? AND hosted=1 AND state='running'", (code,)).rowcount:
+            raise HTTPException(409, "only a hosted pilot whose dashboard is running can get new keys")
+    return {"ok": True}
+
+
 # ---- hosted gateways: provision.py (on the server, with Docker) asks what to do and reports back
 
 @app.get("/v1/admin/provision", dependencies=[Depends(admin)])
 def provision_queue():
     with db() as c:
         # keys_ready: the keys arrived here (and may since have been shown to the founder and forgotten)
-        rows = c.execute("SELECT code, company, subdomain, state, plan, trial_ends, mrr, "
+        rows = c.execute("SELECT code, company, subdomain, state, plan, trial_ends, mrr, rekey, "
                          "(admin_key IS NOT NULL OR keys_revealed_at IS NOT NULL) AS keys_ready "
                          "FROM pilots WHERE hosted=1").fetchall()
-    return {"domain": HOSTED_DOMAIN, "pilots": [dict(r) | {"keys_ready": bool(r["keys_ready"]),
+    return {"domain": HOSTED_DOMAIN, "pilots": [dict(r) | {"keys_ready": bool(r["keys_ready"]), "rekey": bool(r["rekey"]),
                                                           "dashboard": dashboard_url(r["subdomain"]),
                                                           "license": _license_for(r)} for r in rows]}
 
@@ -615,8 +626,9 @@ def provisioned(p: ProvisionedIn):
         elif p.state == "running":
             # New keys (a recreated gateway) replace the old ones, so the start page shows them again
             c.execute("UPDATE pilots SET state='running', error=NULL, admin_key=COALESCE(?, admin_key), "
-                      "agent_key=COALESCE(?, agent_key), keys_revealed_at=CASE WHEN ? IS NULL THEN keys_revealed_at END "
-                      "WHERE code=? AND state != 'deleting'", (p.admin_key, p.agent_key, p.admin_key, p.code))
+                      "agent_key=COALESCE(?, agent_key), keys_revealed_at=CASE WHEN ? IS NULL THEN keys_revealed_at END, "
+                      "rekey=CASE WHEN ? IS NULL THEN rekey ELSE 0 END "
+                      "WHERE code=? AND state != 'deleting'", (p.admin_key, p.agent_key, p.admin_key, p.admin_key, p.code))
         else:
             c.execute("UPDATE pilots SET state='failed', error=? WHERE code=?", (p.error, p.code))
     return {"ok": True}

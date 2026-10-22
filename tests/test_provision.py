@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "insights"))
 
 import provision  # noqa: E402
@@ -133,3 +135,36 @@ def test_the_snippets_run_on_python_38():
         ast.parse(src, feature_version=(3, 8))
     ast.parse((Path(__file__).resolve().parents[1] / "insights" / "provision.py").read_text(encoding="utf-8"),
               feature_version=(3, 8))
+
+
+def test_lost_keys_get_new_ones_and_connected_agents_keep_working(monkeypatch):
+    calls, reports = [], []
+    listing = ("Keys (from /app/data/keys.json):\n  admin                  person  can approve  owner,admin      x\n"
+               "  agent                  agent   agent        -                x\n  alice                  person  can view     -  x\n")
+
+    def docker(*args, check=True):
+        calls.append(args)
+        if args[4:5] == ("keys",):
+            return listing
+        if args[4:5] == ("add-key",):
+            return f"\n  Key for '{args[5]}' (...):\n\n    gw_{args[5][:5]}_NEW\n"
+        return ""
+    monkeypatch.setattr(provision, "docker", docker)
+    monkeypatch.setattr(provision, "api", lambda path, body=None: reports.append(body) or {})
+    provision.new_keys({"code": "co-1", "subdomain": "co"})
+    removed = [c[5] for c in calls if c[4:5] == ("remove-key",)]
+    assert removed == ["admin"]                           # the lost admin key stops working; the agent's and alice's stay
+    added = [c for c in calls if c[4:5] == ("add-key",)]
+    assert "--approver" in added[0] and "owner" in added[0] and "--approver" not in added[1]
+    assert calls.index(added[1]) < calls.index(next(c for c in calls if c[4:5] == ("remove-key",)))   # new before old goes
+    assert reports[-1] == {"code": "co-1", "state": "running", "admin_key": "gw_admin_NEW", "agent_key": "gw_agent_NEW"}
+
+
+def test_new_keys_that_do_not_open_the_gateway_are_never_handed_out(monkeypatch):
+    reports = []
+    monkeypatch.setattr(provision, "docker", lambda *a, check=True: "gw_x_NEW" if a[4:5] == ("add-key",) else "")
+    monkeypatch.setattr(provision, "key_works", lambda name, key: False)
+    monkeypatch.setattr(provision, "api", lambda path, body=None: reports.append(body) or {})
+    with pytest.raises(RuntimeError):
+        provision.new_keys({"code": "co-1", "subdomain": "co"})
+    assert reports == []
