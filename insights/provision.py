@@ -45,7 +45,9 @@ def api(path, body=None):
 def docker(*args, check=True):
     p = subprocess.run(["docker", *args], capture_output=True, text=True)
     if check and p.returncode:
-        raise RuntimeError(f"docker {args[0]}: {(p.stderr or p.stdout).strip()[:300]}")
+        # the end of the output says why (the start of `pilot join`'s is always the same disclosure text)
+        said = (p.stdout.strip() + "\n" + p.stderr.strip()).strip()
+        raise RuntimeError(f"docker {args[0]} (exit {p.returncode}): ...{said[-400:]}")
     return p.stdout.strip()
 
 
