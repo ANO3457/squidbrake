@@ -1,4 +1,5 @@
 """shell_guard.py: the terminal guard's decisions, exit codes and printed snippets."""
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,21 @@ def test_ask(line):
 @pytest.mark.parametrize("line", ["ls", "rm -rf node_modules", "git status", "npm test", ""])
 def test_run_silently(line):
     assert shell_guard.check(line) == ("run", "")
+
+
+def test_check_reads_what_the_line_runs_underneath(tmp_path, monkeypatch):
+    (tmp_path / "Makefile").write_text("clean:\n\trm -rf build/ ~/\n\ntest:\n\tpytest -q\n")
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"release": "git push --force"}}))
+    monkeypatch.chdir(tmp_path)
+    action, message = shell_guard.check("make clean")
+    assert action == "block"
+    assert message == "Squidbrake: blocked: runs Makefile target `clean`, which deletes your home folder (rm -rf build/ ~/)"
+
+    action, message = shell_guard.check("npm run release")
+    assert action == "ask"
+    assert "package.json script `release`" in message
+
+    assert shell_guard.check("make test") == ("run", "")
 
 
 def cli(*args, stdin=None):

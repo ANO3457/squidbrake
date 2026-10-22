@@ -23,15 +23,34 @@ SHELLS = ("bash", "zsh", "powershell")
 
 def check(line: str) -> tuple[str, str]:
     """(action, message) for one command line. The message is empty when the action is run."""
+    import os
+
     import commands
+    import runs
 
     reading = commands.read(line)
+    kind = reading.kind
     why = reading.summary() or line.strip()[:80]
-    if reading.kind == "catastrophic":
+    try:
+        underneath = runs.expand(line, os.getcwd())
+    except Exception:
+        underneath = []                      # fail open: decide on the line alone
+    for item in underneath:                  # what the line runs underneath, read from files on disk
+        via = item.get("via") or "what it runs"
+        for inner in item.get("lines") or []:
+            try:
+                inner_reading = commands.read(inner)
+            except Exception:
+                continue
+            if inner_reading.kind in ("catastrophic", "irreversible", "hidden") and \
+                    commands.SEVERITY.index(inner_reading.kind) > commands.SEVERITY.index(kind):
+                kind = inner_reading.kind    # it can only make the decision stricter, never looser
+                why = f"runs {via}, which {inner_reading.summary() or inner.strip()[:80]}"
+    if kind == "catastrophic":
         return BLOCK, f"Squidbrake: blocked: {why}"
-    if reading.kind == "irreversible":
+    if kind == "irreversible":
         return ASK, f"Squidbrake: this can't be undone: {why}"
-    if reading.kind == "hidden":
+    if kind == "hidden":
         return ASK, f"Squidbrake: {why}"
     return RUN, ""
 
