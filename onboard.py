@@ -79,25 +79,44 @@ def _desktop() -> Path:
     return Path.home() / "Desktop"
 
 
+def _logo(name: str) -> Path | None:
+    """The logo, copied next to Squidbrake's data so the icon keeps working after an upgrade moves the package."""
+    import shutil
+    import service
+    here = Path(__file__).resolve().parent
+    src = next((d / name for d in (here / "assets", here / "squidbrake" / "assets") if (d / name).is_file()), None)
+    if src is None:
+        return None
+    try:
+        dest = service.state_dir() / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        return dest
+    except OSError:
+        return src
+
+
 def make_shortcuts(url: str) -> list[Path]:
     """A 'Squidbrake dashboard' icon: desktop and Start menu (Windows), desktop (macOS), applications menu (Linux).
     Plain links to the address, nothing runs. Not with SQUIDBRAKE_NO_SHORTCUT."""
     if os.getenv("SQUIDBRAKE_NO_SHORTCUT"):
         return []
     if sys.platform == "win32":
-        body, ext = f"[InternetShortcut]\r\nURL={url}\r\n", ".url"
+        icon = _logo("squidbrake.ico")
+        body = f"[InternetShortcut]\r\nURL={url}\r\n" + (f"IconFile={icon}\r\nIconIndex=0\r\n" if icon else "")
+        ext = ".url"
         dirs = [_desktop(), Path(os.getenv("APPDATA") or Path.home()) / "Microsoft" / "Windows" / "Start Menu" / "Programs"]
-    elif sys.platform == "darwin":
+    elif sys.platform == "darwin":     # shortcut: a .webloc shows the browser's icon; the logo needs an app bundle
         import plistlib
         body, ext, dirs = plistlib.dumps({"URL": url}).decode(), ".webloc", [_desktop()]
     else:
-        body = f"[Desktop Entry]\nType=Link\nName={SHORTCUT}\nURL={url}\nIcon=web-browser\n"
+        body = f"[Desktop Entry]\nType=Link\nName={SHORTCUT}\nURL={url}\nIcon={_logo('squidbrake.png') or 'web-browser'}\n"
         ext, dirs = ".desktop", [Path.home() / ".local" / "share" / "applications"]
     made = []
     for d in dirs:
         if d.is_dir():              # never makes a folder: a computer without a desktop gets no desktop icon
             try:
-                (d / (SHORTCUT + ext)).write_text(body, encoding="utf-8")
+                (d / (SHORTCUT + ext)).write_bytes(body.encode("utf-8"))   # as written: no \r\r\n on Windows
                 made.append(d / (SHORTCUT + ext))
             except OSError:
                 pass

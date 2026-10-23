@@ -86,9 +86,13 @@ def test_the_icon_is_a_plain_link_and_only_where_a_desktop_is(monkeypatch, tmp_p
     assert onboard.make_shortcuts("https://acme.app.squidbrake.com/dashboard") == [] or sys.platform.startswith("linux")
     (tmp_path / "Desktop").mkdir()
     (tmp_path / ".local" / "share" / "applications").mkdir(parents=True)
+    monkeypatch.setenv("SQUIDBRAKE_HOME", str(tmp_path / "sb"))
     made = onboard.make_shortcuts("https://acme.app.squidbrake.com/dashboard")
     assert made and all("https://acme.app.squidbrake.com/dashboard" in p.read_text(encoding="utf-8") for p in made)
     assert not (tmp_path / "nope").exists()                              # never makes a folder that isn't there
+    if sys.platform != "darwin":                                         # the logo, kept with Squidbrake's own files
+        logo = next((tmp_path / "sb").glob("squidbrake.*"))
+        assert str(logo) in made[0].read_text(encoding="utf-8") and logo.stat().st_size > 1000
 
 
 def test_auto_opens_the_dashboard_saying_who_joined(machine, monkeypatch):
