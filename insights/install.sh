@@ -224,6 +224,8 @@ main() {
     "$SB" connect agents --agent all --url "$SQUIDBRAKE_URL" --key "$SQUIDBRAKE_AGENT_KEY" --yes 2>&1 | sed 's/^/  /'
     # ... and its own MCP servers (GitHub, Stripe, databases...) go through it too
     "$SB" connect guard --agent all --url "$SQUIDBRAKE_URL" --key "$SQUIDBRAKE_AGENT_KEY" --yes 2>&1 | sed 's/^/  /'
+    # an icon that opens the dashboard any time (desktop or applications menu); later: squidbrake dashboard
+    "$SB" dashboard --shortcut 2>&1 | sed 's/^/  /'
     # check every connected agent's hook end to end (it sends one harmless 'echo' through the dashboard)
     "$SB" doctor --quick 2>/dev/null | sed -n '/\[/p'
     say ""

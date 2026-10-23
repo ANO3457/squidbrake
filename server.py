@@ -2958,6 +2958,8 @@ async def _auto_connect_loop():
                     audit(conn, "gateway", "agents.connected", None, agents=added, why="installed after setup")
                 notify_text("Squidbrake: new agents connected", f"{', '.join(connect.AGENT_LABELS.get(a, a) for a in added)} "
                             "installed on this computer, now checked by Squidbrake. Restart it once to load the hook.")
+                import onboard
+                onboard.open_dashboard(onboard.dashboard_url() + "#connected=" + ",".join(added))
         except Exception:
             log.exception("couldn't connect newly installed agents")
         await asyncio.sleep(600)
@@ -5121,13 +5123,8 @@ def port_in_use(host: str, port: int) -> str | None:
 
 
 def can_open_browser() -> bool:
-    """No browser on a server over SSH or a Linux box without a desktop (webbrowser would start a text browser
-    in this terminal instead)."""
-    if os.getenv("SSH_CONNECTION") or os.getenv("SSH_TTY"):
-        return False
-    if sys.platform.startswith("linux") and not (os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY")):
-        return False
-    return True
+    import service
+    return service.can_open_browser()
 
 
 def _agents_connected_here() -> list[str] | None:

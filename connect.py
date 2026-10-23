@@ -753,6 +753,14 @@ def remember_off(names: list[str], off: bool) -> None:
         pass
 
 
+def auto(_args=None) -> None:
+    """`connect.py auto`: auto_connect, then the dashboard opens saying which agents joined. A hook starts it once a
+    day where the dashboard is hosted (hooklog.daily); a gateway on this computer does it itself (server.py)."""
+    if added := auto_connect():
+        import onboard
+        onboard.open_dashboard(onboard.dashboard_url() + "#connected=" + ",".join(added))
+
+
 def auto_connect() -> list[str]:
     """Install once, covered everywhere: an agent installed after setup (Cursor next week) gets the hook the way setup
     would have given it. Only where Squidbrake is set up (another agent's hook points at a gateway), never an agent a
@@ -1235,7 +1243,7 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="squidbrake connect" if os.getenv("SQUIDBRAKE_CLI") else None,
                                 description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("all", "status", "doctor", "claude-code", "mcp", "wrap", "guard", "agents"):
+    for name in ("all", "status", "doctor", "claude-code", "mcp", "wrap", "guard", "agents", "auto"):
         s = sub.add_parser(name)
         found = name in ("status", "doctor")   # these find the gateway the hooks use
         s.add_argument("--url", default=None if found else "http://localhost:8080",
@@ -1290,7 +1298,8 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(status(args))
     if args.cmd == "doctor":
         sys.exit(doctor(args))
-    {"all": connect_all, "claude-code": claude_code, "mcp": mcp, "wrap": wrap, "guard": guard, "agents": agents}[args.cmd](args)
+    {"all": connect_all, "claude-code": claude_code, "mcp": mcp, "wrap": wrap, "guard": guard, "agents": agents,
+     "auto": auto}[args.cmd](args)
 
 
 if __name__ == "__main__":

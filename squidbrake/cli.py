@@ -181,6 +181,9 @@ def main() -> int:
     if argv[:1] == ["setup"]:      # everything at once: background, every agent connected, dashboard (onboard.py)
         import onboard
         return onboard.main(argv[1:])
+    if argv[:1] == ["dashboard"]:  # open it (this computer's, or a hosted one), or make its icon: --shortcut
+        import onboard
+        return onboard.dashboard_main(argv[1:])
     if argv[:1] == ["service"]:
         import service
         return service.main(argv[1:])

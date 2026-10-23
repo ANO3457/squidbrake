@@ -325,6 +325,7 @@ def main() -> None:
         answer(agent, True)                       # nothing to check
     if hooklog is not None:
         hooklog.record(agent, str(ev.get("hook_event_name") or (ev.get("toolCall") or {}).get("name") or ev.get("tool_name") or ""))
+        hooklog.daily(URL)
     action, session = parse(agent, ev)
     if action is None:
         answer(agent, True)

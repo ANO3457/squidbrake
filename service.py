@@ -41,6 +41,14 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 PASS_ENV = ("SQUIDBRAKE_HOME", "SQUIDBRAKE_CLI", "DATABASE_URL", "KEYS_PATH", "RULES_PATH", "PORT", "HOST")
 
 
+def can_open_browser() -> bool:
+    """No browser on a server over SSH or a Linux box without a desktop (webbrowser would start a text browser
+    in this terminal instead)."""
+    if os.getenv("SSH_CONNECTION") or os.getenv("SSH_TTY"):
+        return False
+    return not (sys.platform.startswith("linux") and not (os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY")))
+
+
 def state_dir() -> Path:
     return Path(os.getenv("SQUIDBRAKE_HOME") or Path.home() / ".squidbrake")
 

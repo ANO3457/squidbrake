@@ -17,6 +17,8 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
+from urllib.parse import urlparse
 
 
 def _say(mark: str, text: str) -> None:
@@ -41,6 +43,82 @@ def offer_terminal_guard(yes: bool) -> None:
         _say("OK", shell_guard.write(shell))
     except OSError as e:
         _say("!", f"Couldn't add the terminal guard ({e}). Later:  squidbrake shell-guard install --write")
+
+
+# ---- the dashboard: one command and one icon, whether it runs on this computer or is hosted
+
+SHORTCUT = "Squidbrake dashboard"
+
+
+def dashboard_url() -> str:
+    """The dashboard this computer's agents use: a hosted one (a pilot), or this computer's own gateway."""
+    import connect
+    hooked = connect._hooked_gateway()
+    base = hooked[0] if hooked else f"http://localhost:{os.getenv('PORT', '8080')}"
+    return base.rstrip("/").replace("//127.0.0.1", "//localhost", 1) + "/dashboard"
+
+
+def open_dashboard(url: str | None = None) -> bool:
+    """Open it in the browser (not over SSH, on a desktop-less Linux box, or with SQUIDBRAKE_NO_BROWSER)."""
+    import service
+    import webbrowser
+    if os.getenv("SQUIDBRAKE_NO_BROWSER") or not service.can_open_browser():
+        return False
+    return webbrowser.open(url or dashboard_url())
+
+
+def _desktop() -> Path:
+    if sys.platform == "win32":     # the real one, also when OneDrive moved it
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders") as k:
+                return Path(winreg.QueryValueEx(k, "Desktop")[0])
+        except OSError:
+            pass
+    return Path.home() / "Desktop"
+
+
+def make_shortcuts(url: str) -> list[Path]:
+    """A 'Squidbrake dashboard' icon: desktop and Start menu (Windows), desktop (macOS), applications menu (Linux).
+    Plain links to the address, nothing runs. Not with SQUIDBRAKE_NO_SHORTCUT."""
+    if os.getenv("SQUIDBRAKE_NO_SHORTCUT"):
+        return []
+    if sys.platform == "win32":
+        body, ext = f"[InternetShortcut]\r\nURL={url}\r\n", ".url"
+        dirs = [_desktop(), Path(os.getenv("APPDATA") or Path.home()) / "Microsoft" / "Windows" / "Start Menu" / "Programs"]
+    elif sys.platform == "darwin":
+        import plistlib
+        body, ext, dirs = plistlib.dumps({"URL": url}).decode(), ".webloc", [_desktop()]
+    else:
+        body = f"[Desktop Entry]\nType=Link\nName={SHORTCUT}\nURL={url}\nIcon=web-browser\n"
+        ext, dirs = ".desktop", [Path.home() / ".local" / "share" / "applications"]
+    made = []
+    for d in dirs:
+        if d.is_dir():              # never makes a folder: a computer without a desktop gets no desktop icon
+            try:
+                (d / (SHORTCUT + ext)).write_text(body, encoding="utf-8")
+                made.append(d / (SHORTCUT + ext))
+            except OSError:
+                pass
+    return made
+
+
+def dashboard_main(argv: list[str]) -> int:
+    """squidbrake dashboard [--shortcut]: open it, or (re)make the icon."""
+    url = dashboard_url()
+    if "--shortcut" in argv:
+        made = make_shortcuts(url)
+        print("\n".join(f"  [OK] {p}" for p in made) or "  No desktop or menu folder here; the dashboard is at " + url)
+        return 0
+    import service
+    if urlparse(url).hostname == "localhost" and not service._answering(urlparse(url).port or 80):
+        print("Squidbrake isn't running on this computer. Start it with:  squidbrake start\n"
+              "(then your agents work again, and this opens the dashboard)")
+        return 1
+    if not open_dashboard(url):
+        print(url)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
     if not created:
         print(f"  Sign in to the dashboard with the admin key you saved the first time.\n"
               f"  Lost it? Make a new one:  {server.CLI} add-key yourname --approver --role admin")
+    if make_shortcuts(f"{shown}/dashboard"):
+        _say("OK", f"Added a '{SHORTCUT}' icon to your desktop and menu. Any time later:  {server.CLI} dashboard")
     print("\nLast step: quit and reopen your agents (Claude Code, Cursor, ...), then work as usual.")
     print(f"Something not right later? Run:  {server.CLI} doctor\n")
     return 0

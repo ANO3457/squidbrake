@@ -340,6 +340,7 @@ def main() -> None:
              "Tell the user to run: squidbrake doctor")
     if hooklog is not None:
         hooklog.record("cursor-via-claude-code" if ev.get("cursor_version") else "claude-code", str(ev.get("hook_event_name") or ""))
+        hooklog.daily(GATEWAY_URL)
     if str(ev.get("tool_name", "")).startswith(SKIP_PREFIXES):
         sys.exit(0)
     if ev.get("cursor_version") and _cursor_has_own_hook():

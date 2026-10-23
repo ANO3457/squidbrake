@@ -248,6 +248,8 @@ if ($env:SQUIDBRAKE_URL -and $env:SQUIDBRAKE_AGENT_KEY) {
     & $sb connect agents --agent all --url $env:SQUIDBRAKE_URL --key $env:SQUIDBRAKE_AGENT_KEY --yes | ForEach-Object { Write-Host "  $_" }
     # ... and its own MCP servers (GitHub, Stripe, databases...) go through it too
     & $sb connect guard --agent all --url $env:SQUIDBRAKE_URL --key $env:SQUIDBRAKE_AGENT_KEY --yes | ForEach-Object { Write-Host "  $_" }
+    # an icon that opens the dashboard any time (desktop and Start menu); later: squidbrake dashboard
+    & $sb dashboard --shortcut | ForEach-Object { Write-Host "  $_" }
     # check every connected agent's hook end to end (it sends one harmless 'echo' through the dashboard)
     & $sb doctor --quick 2>$null | Where-Object { $_ -match "\[" } | ForEach-Object { Write-Host $_ }
     Write-Host "`nLast step: quit and reopen your agents (Claude Code, Cursor, ...), then work as usual."

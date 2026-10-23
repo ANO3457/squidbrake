@@ -51,3 +51,34 @@ def last_call(agent: str) -> datetime | None:
             if d.get("agent") == agent and not d.get("doctor"):
                 found = datetime.fromisoformat(d["t"])
     return found
+
+
+def daily(url: str) -> None:
+    """Once a day, from whichever agent's hook runs first: connect agents installed since setup (connect.py auto). Only
+    for a hosted dashboard; a gateway on this computer does it itself. Starts it in the background: never waits,
+    never raises, and never from the tests (SQUIDBRAKE_HOOKLOG) or a doctor check."""
+    host = url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+    if os.getenv("SQUIDBRAKE_HOOKLOG") or os.getenv("SQUIDBRAKE_DOCTOR") or host in ("localhost", "127.0.0.1", "::1", "[::1]"):
+        return
+    try:
+        import subprocess
+        import sys
+        import time
+        stamp = path().with_name("auto-connect.stamp")
+        if stamp.exists() and time.time() - stamp.stat().st_mtime < 86400:
+            return
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        here = Path(__file__).resolve().parent
+        run = dict(cwd=str(here), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+        cmd = [sys.executable, str(here / "connect.py"), "auto"]
+        if sys.platform != "win32":
+            subprocess.Popen(cmd, start_new_session=True, **run)
+            return
+        quiet = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:   # out of the agent's job, which may end every process the hook started once the hook returns
+            subprocess.Popen(cmd, creationflags=quiet | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0), **run)
+        except OSError:
+            subprocess.Popen(cmd, creationflags=quiet, **run)
+    except Exception:
+        pass

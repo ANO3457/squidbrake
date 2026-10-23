@@ -1029,11 +1029,19 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
   };
   let apiKey = store.get();
   // /dashboard#key=... signs this browser in (the fragment never reaches the server) and is then removed.
-  const fragKey = new URLSearchParams(location.hash.slice(1)).get("key");
+  const frag = new URLSearchParams(location.hash.slice(1)), fragKey = frag.get("key");
   if (fragKey) {
     apiKey = fragKey.trim();
     store.set(apiKey);
-    history.replaceState(null, "", location.pathname + location.search);
+  }
+  // #connected=cursor,codex: opened by Squidbrake itself right after it connected agents installed since setup
+  const joined = (frag.get("connected") || "").split(",").filter((a) => /^[a-z0-9-]{1,40}$/.test(a));
+  if (fragKey || joined.length) history.replaceState(null, "", location.pathname + location.search);
+  if (joined.length) {
+    const names = { "claude-code": "Claude Code", "cursor": "Cursor", "codex": "Codex", "gemini-cli": "Gemini CLI",
+      "vscode": "VS Code Copilot", "antigravity": "Antigravity", "qwen-code": "Qwen Code", "factory": "Factory Droid", "kiro": "Kiro" };
+    const list = joined.map((a) => names[a] || a).join(", ");
+    setTimeout(() => toast(`${list} ${joined.length > 1 ? "are" : "is"} now checked by Squidbrake. Restart ${joined.length > 1 ? "them" : "it"} once to load the hook.`, 15000));
   }
   try { $("#auto").checked = localStorage.getItem("gw.auto") !== "0"; } catch {}
 
@@ -1100,11 +1108,11 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
       client_data_json: toB64u(cred.response.clientDataJSON), attestation_object: toB64u(cred.response.attestationObject) });
   }
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, ms = 3500) {
     let t = $("#toast");
     if (!t) { t = el("div", { id: "toast", class: "toast", role: "status" }); document.body.append(t); }
     t.textContent = msg; t.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 3500);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
   }
   function sinceIso() {
     return new Date(Date.now() - RANGES[state.range].hours * 3600e3).toISOString();

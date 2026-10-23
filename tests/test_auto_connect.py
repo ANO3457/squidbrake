@@ -21,8 +21,9 @@ def machine(monkeypatch, tmp_path):
     monkeypatch.setattr(connect, "local_agents", lambda: [
         {"name": n, "present": True, "connected": n in connected} for n in ("claude-code", "cursor", "codex")])
     done = []
-    monkeypatch.setattr(connect, "claude_code", lambda a: done.append(("claude-code", a.remove)))
-    monkeypatch.setattr(connect, "agents", lambda a: done.append((a.agent, a.remove)))
+    hook = lambda name, a: done.append((name, a.remove)) or (connected.discard if a.remove else connected.add)(name)
+    monkeypatch.setattr(connect, "claude_code", lambda a: hook("claude-code", a))
+    monkeypatch.setattr(connect, "agents", lambda a: hook(a.agent, a))
     monkeypatch.setattr(connect, "guard", lambda a: None)
     return done
 
@@ -62,3 +63,55 @@ def test_the_first_squidbrake_after_pip_install_is_the_whole_setup(monkeypatch):
     monkeypatch.setattr(service, "is_first_start", lambda argv: False)   # every later `squidbrake`: just a start
     cli.main()
     assert ran[-1] == ("start", ["start"])
+
+
+# ---- the dashboard: one command and one icon, local or hosted; it opens after auto-connect saying who joined
+
+def test_the_dashboard_link_follows_the_hooks(monkeypatch):
+    import onboard
+    monkeypatch.setattr(connect, "_hooked_gateway", lambda: ("https://acme.app.squidbrake.com", "gw_x"))
+    assert onboard.dashboard_url() == "https://acme.app.squidbrake.com/dashboard"     # a pilot: the hosted one
+    monkeypatch.setattr(connect, "_hooked_gateway", lambda: ("http://127.0.0.1:9000", "gw_x"))
+    assert onboard.dashboard_url() == "http://localhost:9000/dashboard"
+    monkeypatch.setattr(connect, "_hooked_gateway", lambda: None)
+    assert onboard.dashboard_url() == "http://localhost:8080/dashboard"
+
+
+def test_the_icon_is_a_plain_link_and_only_where_a_desktop_is(monkeypatch, tmp_path):
+    import onboard
+    monkeypatch.delenv("SQUIDBRAKE_NO_SHORTCUT")
+    monkeypatch.setattr(onboard, "_desktop", lambda: tmp_path / "Desktop")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "nope"))
+    monkeypatch.setattr(onboard.Path, "home", lambda: tmp_path)
+    assert onboard.make_shortcuts("https://acme.app.squidbrake.com/dashboard") == [] or sys.platform.startswith("linux")
+    (tmp_path / "Desktop").mkdir()
+    (tmp_path / ".local" / "share" / "applications").mkdir(parents=True)
+    made = onboard.make_shortcuts("https://acme.app.squidbrake.com/dashboard")
+    assert made and all("https://acme.app.squidbrake.com/dashboard" in p.read_text(encoding="utf-8") for p in made)
+    assert not (tmp_path / "nope").exists()                              # never makes a folder that isn't there
+
+
+def test_auto_opens_the_dashboard_saying_who_joined(machine, monkeypatch):
+    import onboard
+    opened = []
+    monkeypatch.setattr(onboard, "open_dashboard", lambda url=None: opened.append(url))
+    monkeypatch.setattr(onboard, "dashboard_url", lambda: "https://acme.app.squidbrake.com/dashboard")
+    connect.auto()
+    assert opened == ["https://acme.app.squidbrake.com/dashboard#connected=cursor,codex"]
+    opened.clear()
+    connect.auto()                                       # nothing new: nothing pops up
+    assert opened == []
+
+
+def test_a_hosted_hook_starts_the_check_once_a_day_never_a_local_one(monkeypatch, tmp_path):
+    import hooklog
+    started = []
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **k: started.append(cmd))
+    monkeypatch.delenv("SQUIDBRAKE_HOOKLOG")
+    monkeypatch.delenv("SQUIDBRAKE_DOCTOR", raising=False)
+    monkeypatch.setattr(hooklog, "path", lambda: tmp_path / "hooks.log")
+    hooklog.daily("http://localhost:8080")                # a gateway here does it itself
+    assert started == []
+    hooklog.daily("https://acme.app.squidbrake.com")
+    hooklog.daily("https://acme.app.squidbrake.com")      # the same day: once
+    assert len(started) == 1 and started[0][-2:] == [str(Path(hooklog.__file__).resolve().parent / "connect.py"), "auto"]

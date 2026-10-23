@@ -14,6 +14,9 @@ os.environ["SQUIDBRAKE_OFFLINE_DIR"] = tempfile.mkdtemp(prefix="squidbrake-offli
 # The agents a person took out (connect.py remember_off): in a temporary folder, never the real ~/.squidbrake.
 os.environ["SQUIDBRAKE_AGENTS_OFF"] = os.path.join(tempfile.mkdtemp(prefix="squidbrake-off-"), "agents-off.json")
 
+# setup's "Squidbrake dashboard" icon: never on the real desktop (test_auto_connect.py makes one in a temporary home).
+os.environ["SQUIDBRAKE_NO_SHORTCUT"] = "1"
+
 # `squidbrake doctor` tells the team's gateway which agents a computer has: never from the tests.
 os.environ["SQUIDBRAKE_NO_INVENTORY"] = "1"
 
