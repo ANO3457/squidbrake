@@ -1575,11 +1575,11 @@ def week_card(request: Request, e: int = Query(..., ge=0, le=10**8), h: int = Qu
 
 @app.get("/score", response_class=HTMLResponse, include_in_schema=False)
 def score_card(request: Request, n: int = Query(..., ge=0, le=100), of: int = Query(..., ge=1, le=100)):
-    """incidents/replay.py's result: how many real AI-agent incidents a set of rules stops."""
+    """incidents/replay.py's result: how many harmful actions from real AI-agent incidents a set of rules stops."""
     if n > of:
         raise HTTPException(404)
     return _card(request, "/score", {"n": n, "of": of}, "Real AI agent incidents, replayed", f"{n} / {of}",
-                 f"Squidbrake stopped {n} of {of} real AI agent incidents.",
+                 f"Squidbrake stopped {n} of {of} harmful actions from real AI agent incidents.",
                  ["each one replayed step by step against the rules", "squidbrake.com/benchmark shows every one"])
 
 

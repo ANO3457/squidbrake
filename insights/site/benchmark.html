@@ -112,6 +112,7 @@ h2.plain{display:block;margin:44px 0 6px}
       <div><dt>3 of 41 routine steps held (false positives)</dt><dd>An allowlist held 10. Asking for everything held 40.</dd></div>
       <div><dt>3.9 ms per decision at the median, 6.2 ms at p95</dt><dd>In-process, SQLite, on the same run.</dd></div>
     </dl>
+    <p><a href="/score?n=14&amp;of=15">Share this result</a> · Run it on your own rules: <code>python incidents/replay.py --rules ~/.squidbrake/rules.yaml</code></p>
 
     <h2 class="plain">The incidents</h2>
     <p>Each row is a public report. The command is the one the agent ran, or our reconstruction where the report didn't publish it (marked <code>modeled</code> in <a href="https://github.com/batrapulkit/squidbrake/blob/main/incidents/scenarios.py" target="_blank" rel="noopener">scenarios.py</a>). No rule was written for any of them.</p>

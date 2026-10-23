@@ -2,6 +2,7 @@
 Replay real AI-agent incidents against Squidbrake's shipped rules.yaml and show what it would have done.
 
     python incidents/replay.py
+    python incidents/replay.py --rules ~/.squidbrake/rules.yaml     # your own rules instead of the shipped ones
 
 Runs on a throwaway database; nothing touches your gateway. See scenarios.py for the incidents and their sources.
 """
@@ -81,10 +82,11 @@ def outcome(results: list[dict]) -> str:
     return "not_stopped" if any(r["outcome"] == "not_stopped" for r in results) else "stopped"
 
 
-def run_all(client, headers: dict, approver: dict, scenarios: list[dict] | None = None) -> list[tuple[dict, list[dict]]]:
-    """Every scenario (or the ones given) against the shipped rules.yaml (swapped in for the replay, then put back)."""
+def run_all(client, headers: dict, approver: dict, scenarios: list[dict] | None = None,
+            rules: Path = ROOT / "rules.yaml") -> list[tuple[dict, list[dict]]]:
+    """Every scenario (or the ones given) against a rules.yaml, the shipped one unless given (swapped in, then put back)."""
     import server
-    shipped = server.Policy(ROOT / "rules.yaml")
+    shipped = server.Policy(rules)
     shipped._maybe_reload()
     previous, server.policy = server.policy, shipped
     try:
@@ -94,6 +96,10 @@ def run_all(client, headers: dict, approver: dict, scenarios: list[dict] | None 
 
 
 def main() -> int:
+    rules = Path(sys.argv[sys.argv.index("--rules") + 1]).expanduser() if "--rules" in sys.argv[:-1] else ROOT / "rules.yaml"
+    if not rules.is_file():
+        print(f"no rules file at {rules}", file=sys.stderr)
+        return 2
     tmp = Path(tempfile.mkdtemp())
     os.environ.update(DATABASE_URL=f"sqlite:///{(tmp / 'replay.db').as_posix()}", KEYS_PATH=str(tmp / "keys.json"),
                       RULES_PATH=str(ROOT / "rules.yaml"), GATEWAY_AUTH="off", LOG_LEVEL="WARNING")
@@ -104,7 +110,7 @@ def main() -> int:
     except (AttributeError, ValueError):
         pass
     with TestClient(server.app) as client:
-        outcomes = run_all(client, {}, {})
+        outcomes = run_all(client, {}, {}, rules=rules)
         edge = run_all(client, {}, {}, EDGE_CASES)
     failed_checks = 0
     failed_outcomes = 0
@@ -130,6 +136,8 @@ def main() -> int:
     outcome_matches = len(outcomes) - failed_outcomes
     print(f"\n{stopped} of {total} harmful actions stopped across {len(outcomes)} incidents; "
           f"{not_stopped} not stopped. {matched} action checks and {outcome_matches} expected outcomes matched.")
+
+    print(f"\nShare it: https://squidbrake.com/score?n={stopped}&of={total}")
 
     print("\nEdge cases (not public incidents: ways around the gateway people asked about)")
     for s, results in edge:
