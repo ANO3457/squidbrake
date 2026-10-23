@@ -5,13 +5,8 @@ several replicas. Everything below works with any Postgres 13+; the Supabase ste
 
 ## Setup
 
-1. **Install the driver** (it isn't installed by default): `pip install "squidbrake[postgres]"`. With Docker, add it
-   to the image:
-
-   ```dockerfile
-   FROM ghcr.io/batrapulkit/squidbrake:latest
-   RUN pip install --no-cache-dir "psycopg[binary]>=3.1"
-   ```
+1. **Install the driver** (pip doesn't by default): `pip install "squidbrake[postgres]"`. The Docker image
+   (`ghcr.io/batrapulkit/squidbrake`, 0.14.5 and later) has it.
 2. **Supabase: create a project for the gateway alone.** It will hold what your agents did (see
    [What is stored](../README.md#what-is-stored)); keep it apart from anything else, such as an analytics project.
 3. **Supabase: run [`deploy/supabase_setup.sql`](../deploy/supabase_setup.sql)** in the SQL editor, after replacing
