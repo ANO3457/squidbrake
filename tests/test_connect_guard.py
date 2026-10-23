@@ -31,8 +31,13 @@ def test_guard_and_restore(tmp_path, monkeypatch):
     vscode = connect.mcp_configs()["vscode"][0][0]
     vscode.parent.mkdir(parents=True)
     vscode.write_text(json.dumps({"servers": {"db": {"type": "stdio", "command": "uvx", "args": ["mcp-db"]}}}), encoding="utf-8")
+    cline = connect.mcp_configs()["cline"][0][0]
+    cline.parent.mkdir(parents=True)
+    cline.write_text(json.dumps({"mcpServers": {"pg": {"command": "npx", "args": ["mcp-pg"], "disabled": False}}}),
+                     encoding="utf-8")
 
     connect.main(["guard", "--agent", "all", "--url", URL, "--key", KEY, "--yes"])
+    assert json.loads(cline.read_text(encoding="utf-8"))["mcpServers"]["pg"]["args"][-3:] == ["--", "npx", "mcp-pg"]
     g = json.loads(cursor.read_text(encoding="utf-8"))
     gh = g["mcpServers"]["github"]
     assert gh["args"][:3] == [str(connect.PROXY), "--app", "github"] and gh["args"][3:] == ["--", "npx", "-y", "@modelcontextprotocol/server-github"]

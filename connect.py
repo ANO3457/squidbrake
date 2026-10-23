@@ -318,6 +318,8 @@ def mcp_configs() -> dict[str, list[tuple[Path, str]]]:
         "antigravity": [(home / ".gemini" / "config" / "mcp_config.json", "mcpServers"), (antigravity_config(), "mcpServers")],
         "kiro": [(home / ".kiro" / "settings" / "mcp.json", "mcpServers")],
         "claude-desktop": [(agent_configs()["claude-desktop"], "mcpServers")],
+        "cline": [(_user_dir() / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings"
+                   / "cline_mcp_settings.json", "mcpServers")],
     }
 
 
@@ -633,6 +635,22 @@ def local_agents() -> list[dict]:
              "checks": covered[a["name"]][0], "not_checked": covered[a["name"]][1]} for a in found]
 
 
+def mcp_servers() -> list[dict]:
+    """Every MCP server the agents here have configured, and whether it goes through Squidbrake's proxy.
+    Names only; commands, URLs and their env (where keys live) never leave this function."""
+    found = []
+    for agent, files in mcp_configs().items():
+        for path, key_name in files:
+            try:
+                servers = json.loads(path.read_text(encoding="utf-8-sig") or "{}").get(key_name) or {}
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(servers, dict):
+                found += [{"agent": agent, "name": str(n)[:80], "guarded": _ours(e) if isinstance(e, dict) else False}
+                          for n, e in servers.items()]
+    return found
+
+
 def report_inventory() -> list[str] | None:
     """Tell the team's gateway which agents this computer has and which go through Squidbrake, so the dashboard can
     show the ones that don't yet. Only names and connected or not; nothing else leaves. Off with
@@ -649,7 +667,8 @@ def report_inventory() -> list[str] | None:
         host = httpx.URL(url).host
         r = httpx.post(f"{url.rstrip('/')}/v1/agents/inventory", headers={"X-Gateway-Key": key}, timeout=5,
                        trust_env=host not in ("localhost", "127.0.0.1", "::1"),
-                       json={"machine": socket.gethostname()[:100] or "unknown", "agents": local_agents()})
+                       json={"machine": socket.gethostname()[:100] or "unknown", "agents": local_agents(),
+                             "mcp": mcp_servers()[:200]})
         r.raise_for_status()
         return r.json().get("not_connected") or []
     except Exception:
@@ -980,6 +999,10 @@ def doctor(args) -> int:
                 say("OK", "Hooks, rules and installed files are as they were (integrity)")
         except Exception as e:
             say("!", f"Couldn't check Squidbrake's own files ({e})")
+    open_mcp = [f"{s['name']} ({s['agent']})" for s in mcp_servers() if not s["guarded"]]
+    if open_mcp:
+        say("!", f"MCP servers that don't go through Squidbrake: {', '.join(open_mcp[:10])}"
+                 + (f" and {len(open_mcp) - 10} more" if len(open_mcp) > 10 else ""), "squidbrake connect guard --agent all")
     missing = report_inventory()          # the team's dashboard lists agents that don't go through Squidbrake yet
     if missing:
         say("!", f"Not connected on this computer: {', '.join(missing)}. Their actions aren't checked or recorded",

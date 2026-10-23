@@ -14,6 +14,20 @@ only in that browser. The page shows:
 - the full record for any event: input, output, error, metadata, the rule that blocked it, timings
 - filters are kept in the URL, so a view like `/dashboard?status=denied&range=7d` can be bookmarked or shared
 
+### Sign in with SSO (Team plan)
+
+People can sign in with your identity provider (Okta, Entra ID, Google Workspace, Auth0, Keycloak or any other
+OpenID Connect provider) instead of pasting a key:
+
+1. Register an app (a web app with a client secret) with the redirect URI `<PUBLIC_URL>/sso/callback`.
+2. Start the gateway with `SQUIDBRAKE_OIDC_ISSUER` (e.g. `https://acme.okta.com`), `SQUIDBRAKE_OIDC_CLIENT_ID`
+   and `SQUIDBRAKE_OIDC_CLIENT_SECRET`, and `PUBLIC_URL` set.
+3. Give each person a key named with their email: `python server.py add-key alice@acme.com --approver`.
+
+The key dialog then shows *Sign in with SSO*. SSO only says who someone is. What they may do still comes from their
+key, and a verified email with no person key gets nothing. A sign-in lasts 12 hours, and removing the key ends it
+at once. Each sign-in is on the record (`sso.login`).
+
 ## Querying
 
 | Endpoint | |

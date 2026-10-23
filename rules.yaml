@@ -157,7 +157,7 @@ data_checks:
 #   count   more than `more_than` earlier matching actions within within_hours; scope: session | agent | identity | all;
 #           sum: <field> = add up that input field (this action plus earlier ones) instead of counting actions
 #             (missing or non-numeric values count as 0); same_target: true = only earlier actions on the same thing
-#   action  deny | review | warn
+#   action  deny | review | warn | notify (runs, and tells the team, like a rule's notify)
 sequences:
   - id: destroy-after-recovery-removed
     action: review
@@ -181,6 +181,12 @@ sequences:
     reason: Many deletions in a short time
     match: { input_regex: '\b(delete|destroy|drop|rm\s+-|rmdir|remove-item)\b' }
     count: { more_than: 20, within_hours: 0.25, scope: session }
+
+  - id: unusual-burst
+    action: notify
+    reason: Far more actions than usual from one agent; it may be stuck in a loop or doing something nobody planned
+    match: {}
+    count: { more_than: 300, within_hours: 0.25, scope: agent }
 
 rules:
   # ---- never allowed

@@ -24,7 +24,8 @@ PUBLIC_KEY_HEX = "57316a1391b1d078f922eeea02ffa5a5f26098f36b48e2048f3e526b6157fe
 GRACE_UNTIL = "2026-11-20"
 FILE = "license.key"
 FEATURES = {"people": "more than one person", "phone": "approvals on a phone",
-            "channels": "Slack, Teams and email", "audit": "audit export and the evidence pack"}
+            "channels": "Slack, Teams and email", "audit": "audit export and the evidence pack",
+            "sso": "sign-in with your company's SSO"}
 UPGRADE_URL = "https://squidbrake.com/signup?plan=team&from=license"
 
 

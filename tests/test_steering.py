@@ -68,6 +68,30 @@ def test_notify_rule_runs_and_tells_the_team_once(c, rules, monkeypatch):
     assert len(mine) == 1 and "only tells you" in mine[0][1]
 
 
+def test_notify_sequence_alerts_on_a_burst_and_holds_nothing(c, rules, monkeypatch):
+    rules.write_text(RULES + """
+sequences:
+  - id: burst
+    action: notify
+    reason: unusual burst
+    match: { name: "crm.lookup*" }
+    count: { more_than: 3, within_hours: 1, scope: agent }
+""", encoding="utf-8")
+    server.policy._maybe_reload()
+    sent = []
+    monkeypatch.setattr(server, "notify_text", lambda title, text: sent.append((title, text)))
+    monkeypatch.setattr(server.threading, "Thread", lambda target, args=(), daemon=None, **kw:
+                        type("T", (), {"start": lambda self: target(*args)})())
+    who = agent()
+    for _ in range(3):
+        post(c, "crm.lookup", source=who)
+    assert not [m for m in sent if who in m[0]]
+    d = post(c, "crm.lookup", source=who)
+    assert d["decision"] == "allow"
+    mine = [m for m in sent if who in m[0]]
+    assert len(mine) == 1 and "unusual burst" in mine[0][1] and "sequence:burst" in mine[0][1]
+
+
 def test_notify_is_a_valid_action_but_not_a_default(tmp_path):
     p = tmp_path / "r.yaml"
     p.write_text("default: notify\nrules: []\n", encoding="utf-8")
@@ -215,6 +239,22 @@ def test_inventory_lists_agents_not_connected(c):
     assert {"machine": m, "agent": "cursor"}.items() <= next(x for x in inv["not_connected"] if x["machine"] == m).items()
     mine = next(x for x in inv["machines"] if x["machine"] == m)
     assert [a["name"] for a in mine["agents"]] == ["claude-code", "cursor"] and mine["key"] == "tester"
+
+
+def test_inventory_keeps_mcp_server_names_only(c, tmp_path, monkeypatch):
+    import connect
+    cfg = tmp_path / "mcp.json"
+    cfg.write_text(json.dumps({"mcpServers": {
+        "github": {"command": "npx", "args": ["-y", "server-github"], "env": {"GITHUB_TOKEN": "ghp_secret"}},
+        "linear": {"command": "python", "args": ["gateway_proxy.py", "--app", "linear"]}}}), encoding="utf-8")
+    monkeypatch.setattr(connect, "mcp_configs", lambda: {"cursor": [(cfg, "mcpServers")]})
+    found = connect.mcp_servers()
+    assert found == [{"agent": "cursor", "name": "github", "guarded": False},
+                     {"agent": "cursor", "name": "linear", "guarded": True}]
+    m = f"laptop-{uuid.uuid4().hex[:12]}"
+    c.post("/v1/agents/inventory", headers=H, json={"machine": m, "agents": [], "mcp": found})
+    mine = next(x for x in c.get("/v1/agents/inventory", headers=BOSS).json()["machines"] if x["machine"] == m)
+    assert mine["mcp"] == found and "ghp_secret" not in json.dumps(mine)
 
 
 # ---- OTLP: every decision as an OpenTelemetry log record

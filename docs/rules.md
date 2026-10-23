@@ -198,6 +198,18 @@ agent. A gentle first step for pilots: nothing is held, and people still see wha
   match: { name: "*export*" }
 ```
 
+A sequence can notify too, which makes it an alert for unusual behaviour. The shipped `unusual-burst` tells the team
+when one agent takes more than 300 actions in 15 minutes:
+
+```yaml
+sequences:
+  - id: unusual-burst
+    action: notify
+    reason: Far more actions than usual from one agent
+    match: {}
+    count: { more_than: 300, within_hours: 0.25, scope: agent }
+```
+
 **`justification: required | optional`** on a rule: the agent must say why before the call runs (`required`), and
 the approver reads it as *Why, says the agent*. Without one the call is blocked with a message asking for it, so the
 agent calls again with a reason. Where the reason comes from: a `justification` argument (the MCP proxy offers it on

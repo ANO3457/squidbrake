@@ -723,7 +723,7 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
       <p class="lede">Each computer's <code>squidbrake doctor</code> says which agents it has. Anything marked
         <b>not connected</b> works without Squidbrake: nothing it does is checked or recorded.</p>
       <div class="tbl-wrap"><table class="events"><thead><tr><th>Computer</th><th>Connected</th><th>Not connected</th>
-        <th>Reported</th></tr></thead><tbody id="teamAgentsRows"></tbody></table></div>
+        <th>MCP servers not guarded</th><th>Reported</th></tr></thead><tbody id="teamAgentsRows"></tbody></table></div>
     </section>
     <section class="card" id="agentsHere" hidden>
       <div class="card-head"><h2>Agents on this computer</h2></div>
@@ -982,6 +982,7 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     <input type="password" id="keyInput" autocomplete="off" placeholder="secret" aria-label="API key">
     <div class="err-msg" id="keyErr"></div>
     <div class="acts">
+      <a class="btn" href="/sso/login" id="ssoBtn" hidden>Sign in with SSO</a>
       <button class="btn" type="button" id="keyCancel">Cancel</button>
       <button class="btn primary" type="submit">Connect</button>
     </div>
@@ -2201,6 +2202,7 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     reload();
   });
   $("#keyCancel").addEventListener("click", () => $("#keyDlg").close());
+  fetch("/sso/status").then((r) => r.json()).then((s) => { $("#ssoBtn").hidden = !s.enabled; }).catch(() => {});
   $("#keyBtn").addEventListener("click", () => openKeyDialog(false));
 
   // ---------- wiring
@@ -2363,6 +2365,7 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
         el("td", {}, el("b", { text: m.machine }), m.stale ? el("span", { class: "tag", style: "margin-left:6px", text: "old report" }) : null),
         el("td", { class: "sec", text: m.agents.filter((a) => a.connected).map((a) => a.label).join(", ") || "none" }),
         el("td", { style: "color:var(--critical)", text: m.agents.filter((a) => !a.connected).map((a) => a.label).join(", ") }),
+        el("td", { style: "color:var(--critical)", text: (m.mcp || []).filter((s) => !s.guarded).map((s) => `${s.name} (${s.agent})`).join(", ") }),
         el("td", { class: "sec", text: fmtAgo(m.at) }))), "No computer has reported yet.");
     } catch { $("#teamAgents").hidden = true; }
   }

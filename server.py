@@ -76,6 +76,7 @@ import weekly
 import license
 import siem
 import signing
+import sso
 import taint
 import verify
 
@@ -974,8 +975,8 @@ class Policy:
         for i, r in enumerate(items or []):
             rid = r.get("id") or f"sequence-{i}"
             action = r.get("action", "review")
-            if action not in ("deny", "review", "warn"):
-                raise ValueError(f"sequences.{rid}: action must be deny, review or warn")
+            if action not in ("deny", "review", "warn", "notify"):
+                raise ValueError(f"sequences.{rid}: action must be deny, review, warn or notify")
             after, count = r.get("after"), r.get("count")
             if not after and not count:
                 raise ValueError(f"sequences.{rid}: needs `after:` or `count:`")
@@ -1741,7 +1742,7 @@ def written_then_run(conn, ev: "EventIn", client: str) -> list[dict]:
     return []
 
 
-SEQUENCE_EFFECT = {"deny": "block", "review": "review", "warn": "warn"}
+SEQUENCE_EFFECT = {"deny": "block", "review": "review", "warn": "warn", "notify": "notify"}
 _recorded_policies: set[str] = set()
 
 
@@ -2131,6 +2132,8 @@ def record_event(ev: EventIn, client: str, client_ip: str | None) -> Decision:
                 signals += data_signals(ev) + taint_signals(conn, ev, client, held_setup_change=held_setup_change)                     + command_found + run_rule_signals(ev, client) + written_then_run(conn, ev, client)
             blocking = next((s for s in signals if s["effect"] == "block"), None)
             needs_person = next((s for s in signals if s["effect"] == "review"), None)
+            if tell := next((s for s in signals if s["effect"] == "notify"), None):   # a pattern that only tells
+                notify_rule = notify_rule or {"id": f"sequence:{tell['rule']}", "reason": tell["message"]}
             signal_id = lambda s: f"sequence:{s['rule']}" if s["check"] == "sequence" else \
                 f"self-protection:{s['check']}" if s["check"] in ("approval", "tamper") else \
                 f"command:{s['check']}" if s["check"].endswith("_command") else \
@@ -3106,8 +3109,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Squidbrake", version="1.0.0", lifespan=lifespan)
 
 
+SSO_HOURS = 12
+
+
+def sso_identify(secret: str) -> str | None:
+    """A dashboard session from signing in with SSO: the person key it stands for, while that key still exists."""
+    if not secret.startswith("sso_"):
+        return None
+    s = (state_get("sso_sessions", {}) or {}).get(_hash(secret))
+    return s["name"] if s and s["exp"] > utcnow() and keystore.is_person(s["name"]) else None
+
+
 def auth(request: Request, x_gateway_key: str | None = Header(None)) -> str:
-    name = keystore.identify(x_gateway_key or "")
+    name = keystore.identify(x_gateway_key or "") or sso_identify(x_gateway_key or "")
     if name is None:
         raise HTTPException(401, "missing or invalid X-Gateway-Key")
     if name in READ_ONLY_KEYS and (request.method not in ("GET", "HEAD") or request.url.path.startswith("/proxy/")):
@@ -3228,6 +3242,7 @@ def agent_toggle(name: str, body: AgentToggleIn, request: Request, who: str = De
 class InventoryIn(BaseModel):
     machine: str = Field(..., min_length=1, max_length=100)
     agents: list[dict] = Field(default_factory=list, max_length=50)   # connect.local_agents(): name, label, present, connected
+    mcp: list[dict] = Field(default_factory=list, max_length=200)     # connect.mcp_servers(): agent, name, guarded
 
 
 INVENTORY_STALE_DAYS = 14
@@ -3239,13 +3254,15 @@ def report_inventory(body: InventoryIn, who: str = Depends(auth)):
     sees the ones that don't yet. Kept per computer; the latest report replaces the one before."""
     clean = [{"name": str(a.get("name"))[:40], "label": str(a.get("label") or a.get("name"))[:60],
               "connected": bool(a.get("connected"))} for a in body.agents if a.get("present") and a.get("name")]
+    mcp = [{"agent": str(s.get("agent"))[:40], "name": str(s.get("name"))[:80], "guarded": bool(s.get("guarded"))}
+           for s in body.mcp if s.get("name")]
     with audited_tx() as conn:
         inv = json.loads(conn.execute(select(gateway_state.c.value).where(gateway_state.c.key == "inventory")).scalar()
                          or "{}")
         if body.machine not in inv and len(inv) >= 2000:
             raise HTTPException(429, "2000 computers reported already; remove old ones first")
         before = inv.get(body.machine, {}).get("agents")
-        inv[body.machine] = {"at": utcnow(), "key": who, "agents": clean}
+        inv[body.machine] = {"at": utcnow(), "key": who, "agents": clean, "mcp": mcp}
         state_set(conn, "inventory", inv)
         if before != clean:
             audit(conn, who, "agents.inventory", body.machine, agents={a["name"]: a["connected"] for a in clean})
@@ -4473,6 +4490,60 @@ def mobile_page():
 def root():
     # ROOT_REDIRECT lets a demo send visitors straight in, e.g. /dashboard#key=demo (see demo/live_demo.py)
     return RedirectResponse(os.getenv("ROOT_REDIRECT", "/dashboard"))
+
+
+def _sso_redirect(request: Request) -> str:
+    return f"{(settings().get('public_url') or PUBLIC_URL or str(request.base_url)).rstrip('/')}/sso/callback"
+
+
+@app.get("/sso/status", include_in_schema=False)
+def sso_status():
+    try:
+        return {"enabled": sso.config() is not None}
+    except ValueError:
+        return {"enabled": False}
+
+
+@app.get("/sso/login", include_in_schema=False)
+def sso_login(request: Request):
+    try:
+        cfg = sso.config()
+    except ValueError as e:
+        raise HTTPException(500, str(e))
+    if cfg is None:
+        raise HTTPException(404, "SSO isn't set up on this gateway (SQUIDBRAKE_OIDC_ISSUER, _CLIENT_ID, _CLIENT_SECRET)")
+    license.need(KEYS_PATH.parent, "sso")
+    try:
+        return RedirectResponse(sso.start(cfg, _sso_redirect(request)))
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"couldn't reach the identity provider: {e}")
+
+
+@app.get("/sso/callback", include_in_schema=False)
+def sso_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    cfg = sso.config()
+    if cfg is None:
+        raise HTTPException(404, "SSO isn't set up on this gateway")
+    if error or not code:
+        raise HTTPException(400, f"sign-in didn't finish: {error or 'no code'}")
+    try:
+        email = sso.finish(cfg, _sso_redirect(request), code, state)
+    except (ValueError, httpx.HTTPError) as e:
+        raise HTTPException(403, f"sign-in refused: {e}")
+    name = next((n for n in keystore.names() if n.lower() == email and keystore.is_person(n)), None)
+    if name is None:
+        raise HTTPException(403, f"{email} signed in, but has no person key here. Ask an admin to add one named with "
+                                 f"your email: python server.py add-key {email} --approver")
+    secret = "sso_" + secrets.token_urlsafe(32)
+    now = utcnow()
+    exp = (datetime.now(timezone.utc) + timedelta(hours=SSO_HOURS)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    with audited_tx() as conn:
+        sessions = {h: s for h, s in (state_get("sso_sessions", {}) or {}).items() if s["exp"] > now}
+        sessions[_hash(secret)] = {"name": name, "exp": exp}
+        state_set(conn, "sso_sessions", sessions)
+        audit(conn, name, "sso.login", name, issuer=cfg["issuer"], ip=_ip(request))
+    # the fragment never reaches a server or a log; the dashboard keeps it like a pasted key
+    return RedirectResponse(f"/dashboard#key={secret}")
 
 
 @app.get("/dashboard", include_in_schema=False)
