@@ -43,7 +43,17 @@ jobs:
         shell: bash
         run: |
           dotnet tool install --global wix --version 5.0.2
-          wix build packaging/native/squidbrake.wxs -d Version=$VERSION -bindpath src=dist/squidbrake -o out/squidbrake-$VERSION-${{ matrix.name }}.msi
+          # an absolute bind path (a relative one is read from the .wxs folder), and -wx: a missing folder must fail,
+          # not make an empty installer
+          wix build packaging/native/squidbrake.wxs -wx -d Version=$VERSION -bindpath "src=$GITHUB_WORKSPACE/dist/squidbrake" \
+            -o out/squidbrake-$VERSION-${{ matrix.name }}.msi
+      - name: installers hold the program
+        shell: bash
+        run: |
+          for f in out/*; do
+            size=$(wc -c < "$f"); echo "$f: $size bytes"
+            [ "$size" -gt 10000000 ] || { echo "$f is too small to hold Squidbrake"; exit 1; }
+          done
       - name: pkg
         if: runner.os == 'macOS'
         run: |

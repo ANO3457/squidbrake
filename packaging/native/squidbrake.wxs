@@ -1,6 +1,6 @@
 <!-- Windows installer (WiX 5) for the native build. Per user: no admin rights, installs into
      %LOCALAPPDATA%\Programs\Squidbrake and adds it to the user's PATH.
-       wix build packaging/native/squidbrake.wxs -d Version=0.14.2 -bindpath src=dist/squidbrake -o squidbrake.msi
+       wix build packaging/native/squidbrake.wxs -wx -d Version=0.14.2 -bindpath src=<absolute path to>/dist/squidbrake -o squidbrake.msi
      With URL and KEY it also connects every agent of the person installing it to the team's gateway (for Intune):
        msiexec /i squidbrake.msi /qn URL=https://gateway.yourcompany.com KEY=gw_... -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
