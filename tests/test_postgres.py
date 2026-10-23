@@ -26,7 +26,9 @@ def test_the_url_from_supabase_works_as_given():
 def test_every_table_is_in_the_schema(c):
     from sqlalchemy import inspect
     schema = os.getenv("DB_SCHEMA") or None
-    assert server.metadata.schema == schema
+    with server.engine.connect() as conn:          # plain SQL lands there too (search_path, set per connection)
+        assert conn.execute(server.text("SELECT current_schema()")).scalar() == (schema or "public")
+        assert conn.execute(server.text("SELECT count(*) FROM events")).scalar() >= 0
     assert TABLES <= set(inspect(server.engine).get_table_names(schema=schema))
     if schema:
         assert "events" not in inspect(server.engine).get_table_names(schema="public")

@@ -460,9 +460,21 @@ else:
         max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")), pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "1800")),
         connect_args={"prepare_threshold": None}
         if os.getenv("DB_DISABLE_PREPARED", "").strip().lower() in ("1", "true", "yes", "on") else {})
+    if DB_SCHEMA:
+        # on every new connection, so plain SQL (tests, a person in psql) finds the tables too. A session holds it:
+        # a direct connection or a session pooler (Supabase port 5432), not a transaction pooler (6543)
+        @sa_event.listens_for(engine, "connect", insert=True)
+        def _pg_schema(dbapi_conn, _):
+            was, dbapi_conn.autocommit = dbapi_conn.autocommit, True
+            cur = dbapi_conn.cursor()
+            cur.execute("SELECT 1 FROM pg_namespace WHERE nspname = %s", (DB_SCHEMA,))
+            if not cur.fetchone():           # only when missing: a limited login may use a schema it can't create
+                cur.execute(f'CREATE SCHEMA "{DB_SCHEMA}"')
+            cur.execute(f'SET search_path TO "{DB_SCHEMA}"')
+            cur.close()
+            dbapi_conn.autocommit = was
 
-# Every table name is qualified with the schema (not a search_path), so it holds through any pooler
-metadata = MetaData(schema=DB_SCHEMA if engine.dialect.name == "postgresql" else None)
+metadata = MetaData()
 # Text columns carry no length: SQLite never enforced one, and Postgres would reject a long path or URL that SQLite kept
 events = Table(
     "events", metadata,
@@ -629,16 +641,12 @@ policy_versions = Table(
 
 def migrate(eng) -> None:
     """Create the table, and add any columns missing from a database made by an older version."""
-    if metadata.schema and not sa_inspect(eng).has_schema(metadata.schema):
-        with eng.begin() as conn:     # only when missing: a limited role may use a schema it can't create
-            conn.execute(text(f'CREATE SCHEMA "{metadata.schema}"'))
     metadata.create_all(eng)
-    existing = {c["name"] for c in sa_inspect(eng).get_columns("events", schema=metadata.schema)}
-    table = f'"{metadata.schema}".events' if metadata.schema else "events"
+    existing = {c["name"] for c in sa_inspect(eng).get_columns("events")}
     with eng.begin() as conn:
         for col in events.columns:
             if col.name not in existing:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col.name} {col.type.compile(eng.dialect)}"))
+                conn.execute(text(f"ALTER TABLE events ADD COLUMN {col.name} {col.type.compile(eng.dialect)}"))
                 log.info("migrated: added column events.%s", col.name)
 
 

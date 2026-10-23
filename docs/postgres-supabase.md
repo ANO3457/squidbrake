@@ -52,7 +52,7 @@ several replicas. Everything below works with any Postgres 13+; the Supabase ste
 | Variable | Default | What it does |
 |---|---|---|
 | `DATABASE_URL` | SQLite in `~/.squidbrake/data` | Where the record lives. |
-| `DB_SCHEMA` | (public) | Postgres: every table in this schema, made if missing. Lowercase letters, digits, `_`. |
+| `DB_SCHEMA` | (public) | Postgres: every table in this schema, made if missing (set as each connection's `search_path`, so it needs a direct connection or a session pooler, not port 6543). Lowercase letters, digits, `_`. |
 | `DB_POOL_SIZE` | 10 | Connections kept open per gateway process. |
 | `DB_MAX_OVERFLOW` | 20 | Extra connections under load. |
 | `DB_POOL_RECYCLE` | 1800 | Seconds before a connection is replaced (poolers close idle ones). |
@@ -90,5 +90,7 @@ New keys are made only when there's no `keys.json` and no `GATEWAY_API_KEYS`.
 - **`remaining connection slots are reserved` / `too many clients`**: lower `DB_POOL_SIZE` and `DB_MAX_OVERFLOW`; each
   gateway process opens up to their sum.
 - **SSL errors**: add `?sslmode=require` to the URL. Supabase needs SSL.
+- **`relation "events" does not exist` with `DB_SCHEMA` set**: a transaction pooler (port 6543) doesn't keep
+  each connection's schema. Use the session pooler (5432) or a direct connection.
 - **`permission denied for schema squidbrake`**: run step 3 again; the gateway's login needs `usage, create` on it.
 - **`DB_SCHEMA: lowercase letters, digits and _ only`**: the name is used in SQL, so it's checked.
