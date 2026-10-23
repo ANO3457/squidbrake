@@ -125,6 +125,12 @@ def update_unedited_rules(path: Path, shipped: Path, known: Path) -> bool:
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{(HOME_DIR / 'data' / 'gateway.db').as_posix()}")
+# postgres:// and postgresql:// (what Supabase and Heroku hand out) mean psycopg 3, the driver the `postgres` extra installs
+DATABASE_URL = re.sub(r"^postgres(ql)?://", "postgresql+psycopg://", DATABASE_URL)
+# Postgres only: the gateway's tables in their own schema (made if missing), e.g. squidbrake instead of public
+DB_SCHEMA = os.getenv("DB_SCHEMA", "").strip() or None
+if DB_SCHEMA and not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", DB_SCHEMA):
+    raise SystemExit("DB_SCHEMA: lowercase letters, digits and _ only, e.g. squidbrake")
 KEYS_PATH = Path(os.getenv("KEYS_PATH", HOME_DIR / "data" / "keys.json"))
 PILOT_DIR = KEYS_PATH.parent          # pilot.json (squidbrake pilot join) lives with the keys: writable, also in Docker
 AUTH_DISABLED = os.getenv("GATEWAY_AUTH", "on").strip().lower() in ("off", "disabled", "false", "0", "no")
@@ -447,23 +453,31 @@ if DATABASE_URL.startswith("sqlite:///"):
         cur.execute("PRAGMA synchronous=NORMAL")
         cur.close()
 else:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=20)
+    # Small hosted plans allow few connections (Supabase's smallest: DB_POOL_SIZE=5, DB_MAX_OVERFLOW=5). A transaction
+    # pooler (Supabase port 6543, PgBouncer) can't keep prepared statements between transactions: DB_DISABLE_PREPARED=1
+    engine = create_engine(
+        DATABASE_URL, pool_pre_ping=True, pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
+        max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")), pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "1800")),
+        connect_args={"prepare_threshold": None}
+        if os.getenv("DB_DISABLE_PREPARED", "").strip().lower() in ("1", "true", "yes", "on") else {})
 
-metadata = MetaData()
+# Every table name is qualified with the schema (not a search_path), so it holds through any pooler
+metadata = MetaData(schema=DB_SCHEMA if engine.dialect.name == "postgresql" else None)
+# Text columns carry no length: SQLite never enforced one, and Postgres would reject a long path or URL that SQLite kept
 events = Table(
     "events", metadata,
-    Column("id", String(36), primary_key=True),
-    Column("created_at", String(32), nullable=False, index=True),  # ISO-8601 UTC, sorts lexically
-    Column("completed_at", String(32)),
-    Column("client", String(200), index=True),      # API-key name that sent it
-    Column("client_ip", String(64)),
-    Column("source", String(200), index=True),      # agent / service / machine name
-    Column("session_id", String(200), index=True),
-    Column("kind", String(100), index=True),        # tool_call | action | http_request | ...
-    Column("name", String(500), index=True),        # tool name, e.g. "shell.exec"
-    Column("status", String(20), index=True),       # awaiting_approval | pending | completed | failed | denied
-    Column("decision", String(10)),                 # allow | deny | review (while awaiting a human)
-    Column("rule_id", String(200)),
+    Column("id", String, primary_key=True),
+    Column("created_at", String, nullable=False, index=True),  # ISO-8601 UTC, sorts lexically
+    Column("completed_at", String),
+    Column("client", String, index=True),      # API-key name that sent it
+    Column("client_ip", String),
+    Column("source", String, index=True),      # agent / service / machine name
+    Column("session_id", String, index=True),
+    Column("kind", String, index=True),        # tool_call | action | http_request | ...
+    Column("name", String, index=True),        # tool name, e.g. "shell.exec"
+    Column("status", String, index=True),       # awaiting_approval | pending | completed | failed | denied
+    Column("decision", String),                 # allow | deny | review (while awaiting a human)
+    Column("rule_id", String),
     Column("reason", Text),
     Column("input", Text),
     Column("output", Text),
@@ -471,32 +485,32 @@ events = Table(
     Column("metadata", Text),
     Column("duration_ms", Float),
     # human approval (only set for calls held by a `review` rule)
-    Column("approval_deadline", String(32)),
-    Column("approval_on_timeout", String(10)),      # allow | deny
+    Column("approval_deadline", String),
+    Column("approval_on_timeout", String),      # allow | deny
     Column("approvers", Text),                      # JSON list of key names, null = any approver
-    Column("decided_by", String(200)),              # approver key name, or "timeout"
-    Column("decided_at", String(32)),
+    Column("decided_by", String),              # approver key name, or "timeout"
+    Column("decided_at", String),
     Column("decision_note", Text),
     Column("signals", Text),                        # JSON list of history-check findings (see history_signals)
-    Column("would", String(10)),                    # shadow mode: what would have happened (deny | review), then allowed
+    Column("would", String),                    # shadow mode: what would have happened (deny | review), then allowed
     Column("risk", Integer),                        # risk.py's 0..100 score: recorded, never used to decide
     Column("risk_why", Text),                       # JSON list of what made the score
     Column("snapshot", Text),                       # JSON: the copy kept before it ran ({kind, ref, summary}), or why not
-    Column("proof_status", String(20)),             # did the change really happen? confirmed | mismatch | error
+    Column("proof_status", String),             # did the change really happen? confirmed | mismatch | error
     Column("proof", Text),                          # JSON: what was checked, where, and what it found (proof.py)
     Column("brief", Text),                          # JSON: the AI approval brief {text, model, at} (advice only)
-    Column("decided_with", String(200)),
+    Column("decided_with", String),
     Column("decision_ms", Float),                   # how long the gateway took to decide (what the agent waited)
-    Column("feedback", String(10)),                 # a person's verdict on a hold or block: legit | right
-    Column("feedback_by", String(200)),
-    Column("feedback_at", String(32)),
-    Column("identity", String(200), index=True),    # who the agent acts for (identity_of): chains follow it            # how the person decided, e.g. "passkey: Pat's iPhone"
+    Column("feedback", String),                 # a person's verdict on a hold or block: legit | right
+    Column("feedback_by", String),
+    Column("feedback_at", String),
+    Column("identity", String, index=True),    # who the agent acts for (identity_of): chains follow it            # how the person decided, e.g. "passkey: Pat's iPhone"
     Column("justification", Text),                  # why the agent says it's doing this (rule `justification:`), redacted
     # two-person approval (rule `required_approvals:`): who approved so far, JSON [{by, at, note, with}]
     Column("required_approvals", Integer),
     Column("approvals", Text),
     # rule `escalate_after_seconds:` / `escalate_to:`: when nobody decided by then, more people may, and are told
-    Column("escalate_at", String(32), index=True),
+    Column("escalate_at", String, index=True),
     Column("escalate_to", Text),
 )
 
@@ -504,20 +518,20 @@ events = Table(
 # that can carry it (Decision.notes), then marked delivered. A steer only: it never approves or lifts anything.
 notes = Table(
     "notes", metadata,
-    Column("id", String(36), primary_key=True),
-    Column("created_at", String(32), nullable=False),
-    Column("by", String(200), nullable=False),
-    Column("agent", String(200), index=True),       # an agent's source or key name, or
-    Column("session_id", String(200), index=True),  # one conversation
+    Column("id", String, primary_key=True),
+    Column("created_at", String, nullable=False),
+    Column("by", String, nullable=False),
+    Column("agent", String, index=True),       # an agent's source or key name, or
+    Column("session_id", String, index=True),  # one conversation
     Column("text", Text, nullable=False),
-    Column("delivered_at", String(32), index=True),
-    Column("delivered_event", String(36)),
+    Column("delivered_at", String, index=True),
+    Column("delivered_event", String),
 )
 
 # Small key/value store for state all workers share: the emergency stop and notification settings.
 gateway_state = Table(
     "gateway_state", metadata,
-    Column("key", String(100), primary_key=True),
+    Column("key", String, primary_key=True),
     Column("value", Text),
 )
 
@@ -526,13 +540,13 @@ gateway_state = Table(
 audit_trail = Table(
     "audit_log", metadata,
     Column("seq", Integer, primary_key=True, autoincrement=True),
-    Column("at", String(32), nullable=False),
-    Column("actor", String(200)),
-    Column("action", String(50), nullable=False),
-    Column("target", String(200)),
+    Column("at", String, nullable=False),
+    Column("actor", String),
+    Column("action", String, nullable=False),
+    Column("target", String),
     Column("detail", Text),
-    Column("prev_hash", String(64), nullable=False, unique=True),  # a fork can't be written silently
-    Column("hash", String(64), nullable=False),
+    Column("prev_hash", String, nullable=False, unique=True),  # a fork can't be written silently
+    Column("hash", String, nullable=False),
 )
 GENESIS = verify.GENESIS
 
@@ -541,35 +555,35 @@ GENESIS = verify.GENESIS
 audit_checkpoints = Table(
     "audit_checkpoints", metadata,
     Column("seq", Integer, primary_key=True),       # the audit entry the checkpoint covers (inclusive)
-    Column("at", String(32), nullable=False),
-    Column("head_hash", String(64), nullable=False),
-    Column("key_id", String(16), nullable=False),
-    Column("signature", String(128), nullable=False),  # Ed25519, hex
+    Column("at", String, nullable=False),
+    Column("head_hash", String, nullable=False),
+    Column("key_id", String, nullable=False),
+    Column("signature", String, nullable=False),  # Ed25519, hex
 )
 
 # A copy of what an approved action was about to change, taken right before it ran (see /v1/events/{id}/snapshot):
 # a file backup on the agent's computer (squidbrake undo ID), or the record itself (an API resource, a row).
 snapshots = Table(
     "snapshots", metadata,
-    Column("id", String(36), primary_key=True),
-    Column("event_id", String(36), nullable=False, index=True),
-    Column("created_at", String(32), nullable=False),
-    Column("kind", String(30), nullable=False),     # local | http | data
-    Column("ref", String(300)),                     # local: the backup id on that computer; http: the URL read
+    Column("id", String, primary_key=True),
+    Column("event_id", String, nullable=False, index=True),
+    Column("created_at", String, nullable=False),
+    Column("kind", String, nullable=False),     # local | http | data
+    Column("ref", String),                     # local: the backup id on that computer; http: the URL read
     Column("summary", Text),
     Column("data", Text),                           # the saved copy (redacted like everything stored)
-    Column("sha256", String(64)),
+    Column("sha256", String),
 )
 
 # Model tokens and money spent, reported by agents (see /v1/usage and rules.yaml `budgets:`).
 usage = Table(
     "usage", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("at", String(32), nullable=False, index=True),
-    Column("client", String(200), index=True),
-    Column("source", String(200), index=True),
-    Column("session_id", String(200)),
-    Column("model", String(100)),
+    Column("at", String, nullable=False, index=True),
+    Column("client", String, index=True),
+    Column("source", String, index=True),
+    Column("session_id", String),
+    Column("model", String),
     Column("input_tokens", Integer),
     Column("output_tokens", Integer),
     Column("cost_usd", Float),
@@ -578,13 +592,13 @@ usage = Table(
 # Phones and laptops that sign approvals with a passkey (Face ID, fingerprint): WebAuthn credentials.
 devices = Table(
     "devices", metadata,
-    Column("credential_id", String(400), primary_key=True),   # base64url
-    Column("person", String(200), nullable=False, index=True),
-    Column("name", String(100)),
-    Column("created_at", String(32), nullable=False),
+    Column("credential_id", String, primary_key=True),   # base64url
+    Column("person", String, nullable=False, index=True),
+    Column("name", String),
+    Column("created_at", String, nullable=False),
     Column("public_key", Text, nullable=False),               # JSON {"x": hex, "y": hex} (P-256)
     Column("sign_count", Integer),
-    Column("last_used_at", String(32)),
+    Column("last_used_at", String),
 )
 
 # What an agent's earlier actions gave it, until it expires: the first step of each `after:` chain in rules.yaml
@@ -592,35 +606,39 @@ devices = Table(
 capabilities = Table(
     "capabilities", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("identity", String(200), index=True, nullable=False),
-    Column("capability", String(200), index=True, nullable=False),   # after:<sequence id>
-    Column("target", String(500)),                                   # what it was on (lowercase), if it says
-    Column("source_event", String(36), index=True, nullable=False),
+    Column("identity", String, index=True, nullable=False),
+    Column("capability", String, index=True, nullable=False),   # after:<sequence id>
+    Column("target", String),                                   # what it was on (lowercase), if it says
+    Column("source_event", String, index=True, nullable=False),
     Column("summary", Text),                                         # the step, in words
-    Column("agent", String(200)),
-    Column("client", String(200)),
-    Column("session_id", String(200)),
-    Column("created_at", String(32), nullable=False),
-    Column("expires_at", String(32), index=True, nullable=False),
+    Column("agent", String),
+    Column("client", String),
+    Column("session_id", String),
+    Column("created_at", String, nullable=False),
+    Column("expires_at", String, index=True, nullable=False),
 )
 
 # Every version of rules.yaml that made a decision, so any decision can be traced to the exact rules behind it.
 policy_versions = Table(
     "policy_versions", metadata,
-    Column("fingerprint", String(16), primary_key=True),
-    Column("first_seen", String(32), nullable=False),
+    Column("fingerprint", String, primary_key=True),
+    Column("first_seen", String, nullable=False),
     Column("content", Text, nullable=False),
 )
 
 
 def migrate(eng) -> None:
     """Create the table, and add any columns missing from a database made by an older version."""
+    if metadata.schema and not sa_inspect(eng).has_schema(metadata.schema):
+        with eng.begin() as conn:     # only when missing: a limited role may use a schema it can't create
+            conn.execute(text(f'CREATE SCHEMA "{metadata.schema}"'))
     metadata.create_all(eng)
-    existing = {c["name"] for c in sa_inspect(eng).get_columns("events")}
+    existing = {c["name"] for c in sa_inspect(eng).get_columns("events", schema=metadata.schema)}
+    table = f'"{metadata.schema}".events' if metadata.schema else "events"
     with eng.begin() as conn:
         for col in events.columns:
             if col.name not in existing:
-                conn.execute(text(f"ALTER TABLE events ADD COLUMN {col.name} {col.type.compile(eng.dialect)}"))
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col.name} {col.type.compile(eng.dialect)}"))
                 log.info("migrated: added column events.%s", col.name)
 
 
