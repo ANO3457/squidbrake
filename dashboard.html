@@ -2823,7 +2823,7 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     $("#ruleSuggest").replaceChildren(...(s.suggestions.length ? [el("h3", { class: "sub-h", text: "Suggested: stop asking about these" }),
       ...s.suggestions.map((x) => el("div", { class: "suggest" },
         el("div", { class: "grow" }, el("code", { text: x.what }),
-          el("div", { class: "sub", text: `approved ${x.approved} times in 30 days, never rejected${x.held_by ? " · held by " + x.held_by : ""}` })),
+          el("div", { class: "sub", text: `approved or marked legit ${x.approved} times in 30 days, never rejected${x.held_by ? " · held by " + x.held_by : ""}` })),
         el("button", { class: "btn", type: "button", text: "Allow it", title: x.yaml, onclick: async (e) => {
           if (!confirm(`Add this rule to rules.yaml?\n\n${x.yaml}`)) return;
           try { await apiPost(`/v1/policy/suggestions/${encodeURIComponent(x.id)}/apply`); toast("Rule added"); loadRuleHelp(); }

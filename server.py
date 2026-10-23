@@ -4719,9 +4719,11 @@ def policy_version_restore(fp: str, who: str = Depends(admin)):
 def _held_and_decided(days: int = 30):
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     with engine.connect() as conn:
-        return conn.execute(select(events.c.name, events.c.input, events.c.rule_id, events.c.decision).where(
-            events.c.created_at >= since, events.c.approval_deadline.isnot(None), events.c.decided_by.isnot(None),
-            events.c.decided_by != "timeout")).all()
+        return conn.execute(select(events.c.name, events.c.input, events.c.rule_id, events.c.decision,
+                                   events.c.decided_by, events.c.feedback).where(
+            events.c.created_at >= since, events.c.approval_deadline.isnot(None),
+            or_(and_(events.c.decided_by.isnot(None), events.c.decided_by != "timeout"), events.c.feedback.isnot(None)))
+        ).all()
 
 
 @app.get("/v1/report/weekly")

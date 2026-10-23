@@ -7,6 +7,9 @@ One pre-execution hook for the coding agents that have hooks, besides Claude Cod
   python agent_hook.py codex        Codex CLI     PreToolUse                             (~/.codex/hooks.json)
   python agent_hook.py vscode       VS Code       PreToolUse (Copilot agent mode)        (~/.copilot/hooks/)
   python agent_hook.py antigravity  Antigravity   PreToolUse                             (~/.gemini/config/hooks.json)
+  python agent_hook.py qwen-code    Qwen Code     PreToolUse                             (~/.qwen/settings.json)
+  python agent_hook.py factory      Factory Droid PreToolUse                             (~/.factory/hooks.json or settings.json)
+  python agent_hook.py kiro         Kiro CLI      PreToolUse                             (~/.kiro/hooks/squidbrake.json)
 
 Each reads the agent's JSON on stdin, sends the action to Squidbrake, waits while a person decides if it's held, and
 answers in that agent's format. Shell commands are sent as "Bash", reads as "Read", writes and edits as "Write" / "Edit",
@@ -42,7 +45,7 @@ try:
 except Exception:  # pragma: no cover
     offline = None
 
-AGENTS = ("cursor", "gemini-cli", "codex", "vscode", "antigravity")
+AGENTS = ("cursor", "gemini-cli", "codex", "vscode", "antigravity", "qwen-code", "factory", "kiro")
 
 
 def _arg(flag: str, env: str, default: str = "") -> str:
@@ -140,10 +143,12 @@ def parse(agent: str, ev: dict) -> tuple[tuple[str, dict] | None, str | None]:
         if ev.get("hook_event_name") == "preToolUse":   # Cursor's own tools: here for edits and deletes
             return cursor_tool(str(ev.get("tool_name") or ""), ev.get("tool_input"), ev.get("cwd")), session
         return normalize(str(ev.get("tool_name", "unknown")), ev.get("tool_input")), session
-    if agent == "codex" and str(ev.get("tool_name", "")).startswith("mcp__"):
-        # Codex's MCP servers live in config.toml, which `connect guard` doesn't rewrite: the hook checks them
+    if agent in ("codex", "factory") and str(ev.get("tool_name", "")).startswith("mcp__"):
+        # Codex's (config.toml) and Droid's MCP servers aren't rewritten by `connect guard`: the hook checks them
         _, server, tool = (str(ev["tool_name"]).split("__", 2) + ["", ""])[:3]
         return mcp_call(server, tool, ev.get("tool_input"), None), ev.get("session_id")
+    if agent == "kiro" and ev.get("tool_name") == "delete_file":
+        return cursor_tool("Delete", ev.get("tool_input"), ev.get("cwd")), ev.get("session_id")
     if agent == "antigravity":
         call = ev.get("toolCall") or {}
         return normalize(str(call.get("name", "unknown")), call.get("args")), ev.get("conversationId")
@@ -159,8 +164,13 @@ def answer(agent: str, allow: bool, message: str = "", stop: bool = False) -> No
         out = {"decision": "allow"} if allow else {"decision": "deny", "reason": message}
         if stop and agent == "gemini-cli":
             out.update({"continue": False, "stopReason": message})
-    elif agent == "codex":
-        if allow:                     # Codex: no output means "carry on"
+    elif agent == "kiro":             # Kiro: exit code 2 blocks the tool, and stderr goes to the agent
+        if allow:
+            sys.exit(0)
+        print(message, file=sys.stderr)
+        sys.exit(2)
+    elif agent in ("codex", "qwen-code", "factory"):
+        if allow:                     # no output means "carry on" (an "allow" would skip the agent's own prompt)
             sys.exit(0)
         out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                       "permissionDecisionReason": message}}

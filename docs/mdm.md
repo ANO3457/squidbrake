@@ -9,11 +9,28 @@ install is assigned per user, not once for all devices.
 
 ## 1. Install and connect
 
-### Windows: Microsoft Intune
+### Native installers (no Python needed)
+
+Each release has a Windows MSI, a macOS .pkg (Apple silicon) and a Linux tarball, built by
+[`.github/workflows/native.yml`](../.github/workflows/native.yml). They hold Squidbrake and everything it needs.
+
+- **Windows MSI.** Installs for one user, with no admin rights, into `%LOCALAPPDATA%\Programs\Squidbrake`, and adds it
+  to that user's PATH. With `URL` and `KEY` it also connects that person's agents, which makes it a one-line Intune
+  Win32 app (install behavior: User):
+  `msiexec /i squidbrake-VERSION-windows-x64.msi /qn URL=https://gateway.yourcompany.com KEY=gw_...`
+- **macOS .pkg.** Installs into `/usr/local/lib/squidbrake` and links `/usr/local/bin/squidbrake`. Jamf can deploy it
+  as a package. Then run `squidbrake connect all --url ... --key ...` as the user, for example with the Jamf script
+  below.
+- **Linux.** Unpack the tarball anywhere and put the `squidbrake` folder on the PATH.
+
+The installers aren't code-signed yet. Installs through an MDM are fine, but opening one by hand shows a Windows
+SmartScreen or macOS Gatekeeper warning.
+
+### Windows: Microsoft Intune, with a script
 
 [`packaging/mdm/intune-install.ps1`](../packaging/mdm/intune-install.ps1) installs Squidbrake for the signed-in user
-and connects their Claude Code, Cursor, Codex, Gemini CLI, VS Code Copilot and Antigravity, and the MCP servers
-those agents use.
+and connects their Claude Code, Cursor, Codex, Gemini CLI, VS Code Copilot, Antigravity, Qwen Code, Factory Droid
+and Kiro, and the MCP servers those agents use.
 
 1. Wrap it as a Win32 app: `IntuneWinAppUtil.exe -c packaging\mdm -s intune-install.ps1 -o out`
 2. Install command:
@@ -64,4 +81,6 @@ and `--dangerously-skip-permissions` / `--yolo` are off.
 
 - **One install for every device.** Each machine needs its person's own key. An enrollment key that makes a key per
   person on first run isn't built yet.
-- **A signed MSI or .pkg.** The scripts above install from PyPI with the same installer as the one-line install.
+- **Code signing.** The MSI and .pkg aren't signed yet: that needs a Windows code-signing certificate and an Apple
+  Developer ID.
+- **A .pkg for Intel Macs.** Intel Macs use Homebrew, pip or the one-line install.

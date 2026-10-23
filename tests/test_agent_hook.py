@@ -40,6 +40,18 @@ CASES = {
     "antigravity": [{"toolCall": {"name": "run_command", "args": {"CommandLine": "rm -rf build/ ~/", "Cwd": "/w"}}, "conversationId": "a1"},
                     {"toolCall": {"name": "run_command", "args": {"CommandLine": "ls -la"}}, "conversationId": "a1"},
                     {"toolCall": {"name": "view_file", "args": {"AbsolutePath": "/w/.env"}}, "conversationId": "a1"}, None],
+    "qwen-code": [{"tool_name": "run_shell_command", "tool_input": {"command": "rm -rf build/ ~/"}, "session_id": "q1"},
+                  {"tool_name": "run_shell_command", "tool_input": {"command": "ls -la"}, "session_id": "q1"},
+                  {"tool_name": "read_file", "tool_input": {"absolute_path": "/w/.env"}, "session_id": "q1"}, None],
+    "factory": [{"hook_event_name": "PreToolUse", "tool_name": "Execute", "tool_input": {"command": "rm -rf build/ ~/"},
+                 "session_id": "f1", "cwd": "/w"},
+                {"hook_event_name": "PreToolUse", "tool_name": "Execute", "tool_input": {"command": "ls -la"}, "session_id": "f1"},
+                {"hook_event_name": "PreToolUse", "tool_name": "Read", "tool_input": {"file_path": "/w/.env"}, "session_id": "f1"},
+                {"hook_event_name": "PreToolUse", "tool_name": "mcp__github__create_issue", "tool_input": {}, "session_id": "f1"}],
+    "kiro": [{"hook_event_name": "PreToolUse", "tool_name": "execute_bash", "tool_input": {"command": "rm -rf build/ ~/"},
+              "session_id": "k1", "cwd": "/w"},
+             {"hook_event_name": "PreToolUse", "tool_name": "execute_bash", "tool_input": {"command": "ls -la"}, "session_id": "k1"},
+             {"hook_event_name": "PreToolUse", "tool_name": "read_file", "tool_input": {"path": "/w/.env"}, "session_id": "k1"}, None],
 }
 
 
@@ -54,10 +66,13 @@ def run(monkeypatch):
     def go(agent, event):
         monkeypatch.setattr(sys, "argv", ["agent_hook.py", agent])
         monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode("utf-8"))))
-        out = io.StringIO()
+        out, err = io.StringIO(), io.StringIO()
         monkeypatch.setattr(sys, "stdout", out)
-        with pytest.raises(SystemExit):
+        monkeypatch.setattr(sys, "stderr", err)
+        with pytest.raises(SystemExit) as done:
             agent_hook.main()
+        if agent == "kiro":            # Kiro: exit code 2 blocks, and stderr is what the agent reads
+            return {"exit": done.value.code or 0, "stderr": err.getvalue()}
         return json.loads(out.getvalue()) if out.getvalue().strip() else {}
 
     with TestClient(server.app):
@@ -68,7 +83,8 @@ def allowed(agent, out):
     return {"cursor": lambda o: o.get("permission") == "allow",
             "gemini-cli": lambda o: o.get("decision") == "allow",
             "antigravity": lambda o: o.get("decision") == "allow",
-            "codex": lambda o: o == {},
+            "codex": lambda o: o == {}, "qwen-code": lambda o: o == {}, "factory": lambda o: o == {},
+            "kiro": lambda o: o["exit"] == 0,
             "vscode": lambda o: o["hookSpecificOutput"]["permissionDecision"] == "allow"}[agent](out)
 
 
@@ -80,7 +96,7 @@ def test_each_agent(run, agent):
     assert allowed(agent, run(agent, listing))
     if secret:
         assert not allowed(agent, run(agent, secret))
-    if mcp and agent == "codex":                        # Codex's MCP servers aren't guarded: the hook checks them
+    if mcp and agent in ("codex", "factory"):           # their MCP servers aren't guarded: the hook checks them
         assert not allowed(agent, run(agent, mcp))      # (creating an issue waits for a person)
     elif mcp:
         assert allowed(agent, run(agent, mcp))          # the others' MCP tools are left to `connect guard`
@@ -112,6 +128,32 @@ def test_install_and_remove_hooks(tmp_path, monkeypatch):
     assert json.loads((tmp_path / ".cursor" / "hooks.json").read_text(encoding="utf-8")) == {
         "version": 1, "hooks": {"beforeShellExecution": [{"command": "./their-own-hook.sh"}]}}
     assert not (tmp_path / ".codex" / "hooks.json").exists()
+
+
+def test_install_and_remove_qwen_factory_kiro(tmp_path, monkeypatch):
+    for var in ("USERPROFILE", "HOME"):
+        monkeypatch.setenv(var, str(tmp_path))
+    for var in ("QWEN_HOME", "KIRO_HOME"):
+        monkeypatch.delenv(var, raising=False)
+    (tmp_path / ".qwen").mkdir()
+    (tmp_path / ".qwen" / "settings.json").write_text(json.dumps({"model": "qwen3", "mcpServers": {}}), encoding="utf-8")
+    (tmp_path / ".factory").mkdir()        # hooks.json there: Droid ignores settings.json's hooks, so it goes in hooks.json
+    (tmp_path / ".factory" / "hooks.json").write_text(json.dumps({"Stop": [{"hooks": [{"type": "command", "command": "x"}]}]}),
+                                                      encoding="utf-8")
+    (tmp_path / ".kiro").mkdir()
+    connect.main(["agents", "--url", "https://x.app.example.com", "--key", "gw_k", "--yes"])
+    q = json.loads((tmp_path / ".qwen" / "settings.json").read_text(encoding="utf-8"))
+    assert q["model"] == "qwen3" and "qwen-code --url" in q["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    f = json.loads((tmp_path / ".factory" / "hooks.json").read_text(encoding="utf-8"))
+    assert "Stop" in f and "factory --url" in f["PreToolUse"][0]["hooks"][0]["command"] and "hooks" not in f
+    k = json.loads((tmp_path / ".kiro" / "hooks" / "squidbrake.json").read_text(encoding="utf-8"))
+    assert k["version"] == "v1" and [h["matcher"] for h in k["hooks"]] == ["shell", "write", "read"]
+    assert all(h["trigger"] == "PreToolUse" and "kiro --url" in h["action"]["command"] for h in k["hooks"])
+    connect.main(["agents", "--remove", "--yes"])
+    assert json.loads((tmp_path / ".qwen" / "settings.json").read_text(encoding="utf-8")) == {"model": "qwen3", "mcpServers": {}}
+    assert json.loads((tmp_path / ".factory" / "hooks.json").read_text(encoding="utf-8")) == {
+        "Stop": [{"hooks": [{"type": "command", "command": "x"}]}]}
+    assert not (tmp_path / ".kiro" / "hooks" / "squidbrake.json").exists()
 
 
 def test_a_gateway_that_is_gone_says_what_to_do():

@@ -108,6 +108,13 @@ def main() -> int:
     sys.path.insert(0, str(here if (here / "server.py").exists() else here.parent))
     os.environ.setdefault("SQUIDBRAKE_CLI", "squidbrake")
     argv = sys.argv[1:]
+    if getattr(sys, "frozen", False) and argv[:1] and argv[0].endswith(".py"):
+        # The native build (packaging/native) has no python: hooks, the MCP proxy and the service are written as
+        # "<this program> <script>.py ...", so it runs our own scripts the way python would
+        import runpy
+        sys.argv = argv
+        runpy.run_path(argv[0], run_name="__main__")
+        return 0
     if argv[:1] in (["-V"], ["--version"]):
         from squidbrake import __version__
         print(f"squidbrake {__version__}")

@@ -2,7 +2,7 @@
 Adding rules from the dashboard, safely: suggestions from what people keep approving, and starter packs per kind of
 agent (support, finance, ops).
 
-  suggestions()   calls held for a person, approved 5+ times in 30 days and never rejected, grouped by what they are
+  suggestions()   calls held for a person, approved (or marked "legit") 5+ times in 30 days and never rejected, grouped by what they are
                   (a tool, or a shell command's program and subcommand): each comes with an `allow` rule to add.
                   Never suggested: money, an agent changing its own setup, or anything the command, history,
                   data or chain checks held (a rule can't and shouldn't open those).
@@ -51,7 +51,7 @@ def _slug(s: str) -> str:
 def rule_for(kind: str, words: list[str], tool: str, count: int) -> tuple[str, str]:
     """(id, YAML block) for an allow rule matching this group."""
     rid = "allow-" + _slug(" ".join(words) if kind == "shell" else tool)
-    reason = f"People approved this {count} times in 30 days; added from Squidbrake's suggestions"
+    reason = f"People approved this (or marked it legit) {count} times in 30 days; added from Squidbrake's suggestions"
     if kind == "shell":
         rx = '"command":\\s*"' + re.escape(" ".join(words)).replace("'", "''") + '(\\s|")'
         match = f"      name: [\"{tool}\"]\n      input_regex: '{rx}'"
@@ -60,11 +60,27 @@ def rule_for(kind: str, words: list[str], tool: str, count: int) -> tuple[str, s
     return rid, f"  - id: {rid}\n    action: allow\n    reason: {reason}\n    match:\n{match}\n"
 
 
+def vote(r) -> str | None:
+    """What people said about one held call: a "legit" / "right" verdict (feedback) wins over how it was decided,
+    so a hold that timed out or was rejected by mistake still teaches. -> "approved", "rejected" or None."""
+    fb = getattr(r, "feedback", None)
+    if fb in ("legit", "right"):
+        return "approved" if fb == "legit" else "rejected"
+    who = getattr(r, "decided_by", "a person")
+    if not who or who == "timeout":
+        return None
+    return "approved" if r.decision == "allow" else "rejected"
+
+
 def suggestions(rows, shell_tools: list[str], min_count: int = 5) -> list[dict]:
-    """rows: held calls decided by a person (name, input, rule_id, decision). -> suggested rules, most approved first."""
+    """rows: held calls (name, input, rule_id, decision, decided_by, feedback). -> suggested rules, most approved
+    first. One rejection, or one "right" verdict, and that kind of call is never suggested."""
     import json
     groups: dict[tuple, dict] = {}
     for r in rows:
+        v = vote(r)
+        if v is None:
+            continue
         try:
             inp = json.loads(r.input) if isinstance(r.input, str) else r.input
         except ValueError:
@@ -73,7 +89,7 @@ def suggestions(rows, shell_tools: list[str], min_count: int = 5) -> list[dict]:
         if s is None:
             continue
         g = groups.setdefault((r.name, s[0], tuple(s[1])), {"approved": 0, "rejected": 0, "rules": {}})
-        g["approved" if r.decision == "allow" else "rejected"] += 1
+        g[v] += 1
         g["rules"][r.rule_id or ""] = g["rules"].get(r.rule_id or "", 0) + 1
     out = []
     for (tool, kind, words), g in groups.items():

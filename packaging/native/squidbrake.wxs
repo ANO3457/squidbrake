@@ -1,0 +1,37 @@
+<!-- Windows installer (WiX 5) for the native build. Per user: no admin rights, installs into
+     %LOCALAPPDATA%\Programs\Squidbrake and adds it to the user's PATH.
+       wix build packaging/native/squidbrake.wxs -d Version=0.14.2 -bindpath src=dist/squidbrake -o squidbrake.msi
+     With URL and KEY it also connects every agent of the person installing it to the team's gateway (for Intune):
+       msiexec /i squidbrake.msi /qn URL=https://gateway.yourcompany.com KEY=gw_... -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Squidbrake" Manufacturer="Squidbrake" Version="$(Version)" Scope="perUser"
+           UpgradeCode="7d6c1f9e-3a52-4c1b-9e1c-5b2d4a8f0c31">
+    <MajorUpgrade DowngradeErrorMessage="A newer Squidbrake is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Squidbrake" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="App" Directory="INSTALLFOLDER">
+      <Files Include="!(bindpath.src)**" />
+      <Component Id="UserPath" Guid="b3f0e2a4-6c1d-4e8a-9f27-2c5e7d1a9b40">
+        <Environment Id="PathEntry" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="no" />
+        <RegistryValue Root="HKCU" Key="Software\Squidbrake" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="App" />
+    </Feature>
+
+    <!-- best effort: a gateway that can't be reached doesn't undo the install; `squidbrake doctor` says what's wrong -->
+    <CustomAction Id="ConnectAgents" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="yes" Return="ignore"
+                  ExeCommand="&quot;[INSTALLFOLDER]squidbrake.exe&quot; connect all --url &quot;[URL]&quot; --key &quot;[KEY]&quot; --yes" />
+    <InstallExecuteSequence>
+      <Custom Action="ConnectAgents" Before="InstallFinalize" Condition="URL AND KEY AND NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

@@ -3,7 +3,8 @@ Connect an AI agent to Squidbrake in one command.
 (Installed with pip? Type `squidbrake connect ...` wherever this says `python connect.py ...`.)
 
   python connect.py all                    every agent on this computer at once: Claude Code, Cursor, Codex,
-                                           Gemini CLI, VS Code, Antigravity, and the MCP servers they use (--remove undoes it)
+                                           Gemini CLI, VS Code, Antigravity, Qwen Code, Factory Droid, Kiro, and
+                                           the MCP servers they use (--remove undoes it)
   python connect.py status                 which agents go through Squidbrake, and whether each will run the hook
   python connect.py doctor                 check everything end to end and say what to fix (squidbrake doctor)
                                            (Codex runs a new hook only after you trust it in /hooks)
@@ -318,6 +319,7 @@ def mcp_configs() -> dict[str, list[tuple[Path, str]]]:
         "antigravity": [(home / ".gemini" / "config" / "mcp_config.json", "mcpServers"), (antigravity_config(), "mcpServers")],
         "kiro": [(home / ".kiro" / "settings" / "mcp.json", "mcpServers")],
         "claude-desktop": [(agent_configs()["claude-desktop"], "mcpServers")],
+        "qwen-code": [(Path(os.path.expanduser(os.getenv("QWEN_HOME") or home / ".qwen")) / "settings.json", "mcpServers")],
         "cline": [(_user_dir() / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings"
                    / "cline_mcp_settings.json", "mcpServers")],
     }
@@ -493,6 +495,29 @@ def hook_agents() -> dict[str, dict]:
         if cmd:
             data["squidbrake"] = {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": cmd, "timeout": 600}]}]}
 
+    # Droid reads ~/.factory/hooks.json (events at the top) and, only when that's absent, settings.json's "hooks" key
+    factory_dir = home / ".factory"
+    factory_file = factory_dir / ("hooks.json" if (factory_dir / "hooks.json").exists() else "settings.json")
+    factory_edit = grouped("PreToolUse", "Execute|Read|Edit|Create|ApplyPatch|mcp__.*", 600)
+
+    def factory(data, cmd):
+        if factory_file.name == "settings.json":
+            return factory_edit(data, cmd)
+        wrapped = {"hooks": dict(data)}
+        factory_edit(wrapped, cmd)
+        data.clear()
+        data.update(wrapped.get("hooks", {}))
+
+    def kiro(data, cmd):
+        data.clear()                  # our own file in a folder Kiro loads every .json from
+        if cmd:                       # one hook per category tag: shell is execute_bash / execute_pwsh
+            data.update({"version": "v1", "hooks": [
+                {"name": f"squidbrake-{m}", "trigger": "PreToolUse", "matcher": m, "timeout": 600,
+                 "action": {"type": "command", "command": cmd}} for m in ("shell", "write", "read")]})
+
+    qwen_dir = Path(os.path.expanduser(os.getenv("QWEN_HOME") or home / ".qwen"))
+    kiro_dir = Path(os.path.expanduser(os.getenv("KIRO_HOME") or home / ".kiro"))
+
     return {
         "cursor": {"present": (home / ".cursor").exists(), "file": home / ".cursor" / "hooks.json", "edit": cursor,
                    "covers": "terminal commands, file reads, edits and deletes, and MCP tools",
@@ -514,6 +539,16 @@ def hook_agents() -> dict[str, dict]:
                         "file": home / ".gemini" / "config" / "hooks.json", "edit": antigravity,
                         "covers": "terminal commands, file reads and writes",
                         "misses": "nothing known"},
+        "qwen-code": {"present": bool(shutil.which("qwen")) or qwen_dir.exists(), "file": qwen_dir / "settings.json",
+                      "edit": grouped("PreToolUse", "^(run_shell_command|write_file|edit|read_file)$", 600),
+                      "covers": "shell commands, file reads, writes and edits",
+                      "misses": "MCP tools (unless connect wrapped the server); everything when disableAllHooks is on"},
+        "factory": {"present": bool(shutil.which("droid")) or factory_dir.exists(), "file": factory_file, "edit": factory,
+                    "covers": "commands, file reads, edits and new files, and MCP tools",
+                    "misses": "Factory's cloud (remote) sessions"},
+        "kiro": {"present": bool(shutil.which("kiro-cli")) or kiro_dir.exists(), "file": kiro_dir / "hooks" / "squidbrake.json",
+                 "edit": kiro, "covers": "Kiro CLI: shell commands, file reads and writes",
+                 "misses": "the Kiro IDE and Kiro Web, which read hooks from the project's .kiro/hooks only"},
     }
 
 
@@ -622,7 +657,8 @@ def _hooked_gateway() -> tuple[str, str] | None:
 
 
 AGENT_LABELS = {"claude-code": "Claude Code", "cursor": "Cursor", "codex": "Codex", "gemini-cli": "Gemini CLI",
-                "vscode": "VS Code Copilot", "antigravity": "Antigravity"}
+                "vscode": "VS Code Copilot", "antigravity": "Antigravity", "qwen-code": "Qwen Code",
+                "factory": "Factory Droid", "kiro": "Kiro"}
 
 
 def local_agents() -> list[dict]:
@@ -686,7 +722,7 @@ def set_agent(name: str, on: bool, url: str) -> None:
         claude_code(args)
     else:
         agents(args)
-        if name in ("cursor", "vscode", "gemini-cli", "antigravity"):
+        if name in ("cursor", "vscode", "gemini-cli", "antigravity", "qwen-code"):
             guard(args)
 
 
@@ -765,7 +801,9 @@ DOCTOR_EVENTS = {
 RESTART = {"cursor": "Quit Cursor completely (Cmd+Q on a Mac, File > Exit on Windows) and open it again",
            "claude-code": "Close every Claude Code window and start it again",
            "codex": "Quit Codex and start it again", "gemini-cli": "Quit Gemini CLI and start it again",
-           "vscode": "Quit VS Code completely and open it again", "antigravity": "Quit Antigravity and open it again"}
+           "vscode": "Quit VS Code completely and open it again", "antigravity": "Quit Antigravity and open it again",
+           "qwen-code": "Quit Qwen Code and start it again", "factory": "Quit Droid and start it again",
+           "kiro": "Start a new Kiro CLI session"}
 
 
 def _join(parts: list[str]) -> str:
@@ -929,7 +967,7 @@ def doctor(args) -> int:
         if t["present"]:
             agents[name] = t["file"]
     if not agents:
-        say("X", "No coding agent found on this computer (Claude Code, Cursor, Codex, Gemini CLI, VS Code, Antigravity)")
+        say("X", "No coding agent found on this computer (Claude Code, Cursor, Codex, Gemini CLI, VS Code, Antigravity, Qwen Code, Factory Droid, Kiro)")
     for name, f in agents.items():
         try:
             cmds = _hook_commands(json.loads(f.read_text(encoding="utf-8-sig"))) if f.exists() else []
@@ -1054,7 +1092,8 @@ def connect_all(args) -> None:
             print(f"Only: {', '.join(only)} (the other agents here are left as they are)")
         print(f"\nThis routes what every AI agent on this computer does through the gateway at {args.url}:\n"
               f"  - Claude Code: {'every tool call' if claude else 'not found, skipped'}\n"
-              "  - Cursor, Codex, Gemini CLI, VS Code Copilot, Antigravity (the ones installed): commands, reads and edits\n"
+              "  - Cursor, Codex, Gemini CLI, VS Code Copilot, Antigravity, Qwen Code, Factory Droid, Kiro (the ones\n"
+              "    installed): commands, reads and edits\n"
               "  - the MCP servers those agents already use\n"
               "Every config is backed up first; `connect all --remove` undoes it all.")
         if not confirm("Continue?", args.yes):
@@ -1074,7 +1113,7 @@ def connect_all(args) -> None:
             guard(each)
         for name in others:
             agents(argparse.Namespace(**{**vars(each), "agent": name}))
-            if name in ("cursor", "vscode", "gemini-cli", "antigravity"):         # its MCP servers too
+            if name in ("cursor", "vscode", "gemini-cli", "antigravity", "qwen-code"):         # its MCP servers too
                 guard(argparse.Namespace(**{**vars(each), "agent": name}))
     finally:
         if created:                              # whatever stopped it, the keys are shown: they're shown only once

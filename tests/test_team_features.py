@@ -111,6 +111,18 @@ def test_suggestions_and_adding_one(c, shipped):
     assert c.get("/v1/policy/suggestions", headers=BOSS).json()["suggestions"] == []
 
 
+def test_legit_feedback_teaches_and_right_feedback_stops_it():
+    R = lambda name, decision, by, fb=None: type("R", (), {"name": name, "input": "{}", "rule_id": None,
+                                                           "decision": decision, "decided_by": by, "feedback": fb})()
+    # timed out or rejected by mistake, then marked legit: counts as approved
+    rows = [R("crm.update", "deny", "timeout", "legit") for _ in range(3)] + [R("crm.update", "deny", "boss", "legit"),
+                                                                             R("crm.update", "allow", "boss")]
+    rows += [R("crm.note", "allow", "boss") for _ in range(6)] + [R("crm.note", "allow", "boss", "right")]
+    rows += [R("crm.read", "deny", "timeout") for _ in range(9)]                  # nobody said anything: no vote
+    s = policy_edit.suggestions(rows, ["Bash"])
+    assert [(x["tool"], x["approved"]) for x in s] == [("crm.update", 5)]
+
+
 def test_shell_suggestions_group_by_program_and_subcommand():
     rows = [type("R", (), {"name": "Bash", "input": json.dumps({"command": f"npm run deploy:staging -- --tag {i}"}),
                            "rule_id": None, "decision": "allow"})() for i in range(5)]

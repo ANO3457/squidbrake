@@ -27,7 +27,7 @@ sits between the agents and those actions:
 Every decision goes into a tamper-evident record that someone outside engineering can read.
 
 One policy covers every agent your company runs: Claude Code, Cursor, Codex, Gemini CLI, VS Code Copilot,
-Antigravity, and any MCP tool. Open source (Apache 2.0) and free for one person; more than one person, phone approvals, Slack/Teams/email and the audit export are part of the Team plan (`squidbrake license`). Runs on your laptop or your own server.
+Antigravity, Qwen Code, Factory Droid, Kiro, and any MCP tool. Open source (Apache 2.0) and free for one person; more than one person, phone approvals, Slack/Teams/email and the audit export are part of the Team plan (`squidbrake license`). Runs on your laptop or your own server.
 
 ![Demo: every agent action goes on the record; a refund waits for a person and is approved from a phone; the record shows who asked, who approved and what led to it](https://raw.githubusercontent.com/batrapulkit/squidbrake/main/docs/demo.gif)
 
@@ -185,7 +185,10 @@ The incidents and the session benchmark run in CI, so they can't quietly stop be
 | Gemini CLI | shell commands, reads, writes and edits, and its MCP servers |
 | VS Code Copilot | agent-mode commands, reads and edits, and its MCP servers |
 | Antigravity | terminal commands, reads and writes, and its MCP servers |
-| Windsurf, Kiro, Claude Desktop | their MCP servers |
+| Qwen Code | shell commands, reads, writes and edits, and its MCP servers |
+| Factory Droid | commands, reads, edits and new files, and MCP tools |
+| Kiro CLI | shell commands, reads and writes; its MCP servers (Kiro IDE: MCP servers only) |
+| Windsurf, Cline, Claude Desktop | their MCP servers |
 | Any MCP client, ChatGPT / claude.ai connectors, Devin, n8n | through the MCP proxy, by command or by URL |
 | Your own agents (OpenAI Agents SDK, LangGraph, CrewAI, ...) | `gw.guard_tools(tools)` in Python, or two HTTP calls from any language |
 
