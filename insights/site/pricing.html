@@ -74,8 +74,12 @@ dl.facts dd{margin:2px 0 0;color:var(--muted)}
 h2.plain{display:block;margin:44px 0 6px}
 @media (max-width:560px){ .rel{grid-template-columns:80px 1fr} .rel time{display:none} td:first-child{white-space:normal} }
 .ph-badge{display:inline-block;line-height:0}.ph-badge img{max-width:100%;height:auto}
-.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:8px 0 28px}
-.plan{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 16px;display:flex;flex-direction:column}
+.plans{display:grid;grid-template-columns:1fr;gap:12px;margin:8px 0 28px}
+.plan{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px 24px;display:grid;grid-template-columns:200px 1fr;grid-template-rows:auto auto auto 1fr;column-gap:32px}
+.plan>*{grid-column:1}
+.plan>ul{grid-column:2;grid-row:1 / span 4;margin:0}
+.plan .cta{align-self:end}
+@media (max-width:560px){ .plan{display:flex;flex-direction:column;padding:18px 16px} .plan>ul{margin:0 0 14px} }
 .plan.pick{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
 .plan h3{margin:0 0 4px;font-weight:500;font-size:1.15rem;letter-spacing:-0.02em}
 .plan .price{font-size:1.9rem;font-weight:500;letter-spacing:-0.04em;margin:6px 0 0}
@@ -141,11 +145,12 @@ h2.plain{display:block;margin:44px 0 6px}
         <h3>Enterprise</h3>
         <p class="price">Custom</p><p class="per">yearly, set up with you</p>
         <ul>
-          <li>Run in your own cloud, set up with us</li>
-          <li>Security review and your questionnaires answered</li>
-          <li>Rules and connectors for your systems</li>
-          <li>A named contact</li>
-          <li>Single sign-on, data kept in a region you choose, an uptime commitment <span class="soon">not built yet</span></li>
+          <li>Everything in Business, for every team</li>
+          <li>Runs in your own cloud or VPC, set up with us; your agents&#39; data never reaches ours</li>
+          <li>Your security review: questionnaires answered, architecture and data-flow walked through</li>
+          <li>Rules and connectors built for your systems</li>
+          <li>A named contact and a yearly contract your procurement team can sign</li>
+          <li><span class="soon">Roadmap</span> Single sign-on and SCIM, streaming to your SIEM, a data region you choose, an uptime SLA</li>
         </ul>
         <a class="cta" href="https://calendly.com/pulkitbatra2024/new-meeting-1" target="_blank" rel="noopener">Book a call</a>
       </section>
@@ -154,18 +159,27 @@ h2.plain{display:block;margin:44px 0 6px}
     <h2 class="plain">What every plan includes</h2>
     <p>Rules that allow, hold or block each action an agent takes; approvals from the dashboard, your phone, Slack, Teams or email, with Face ID or fingerprint if you want them signed; a stop button for one agent, one conversation or all of them; an undo copy before risky changes; a hash-chained audit trail with signed checkpoints, exported as CSV or JSON and checkable by anyone; evidence packs mapped to SOC 2, ISO/IEC 42001 and the EU AI Act; spend limits per agent; checks that what an agent says it did really happened; and, with your own Anthropic key, a short AI brief on each held action.</p>
 
+    <h2 class="plain">For security and procurement teams</h2>
+    <dl class="facts">
+      <div><dt>Deployment</dt><dd>Self-hosted with Docker, or run in your own cloud on Enterprise. Nothing has to leave your network.</dd></div>
+      <div><dt>Audit evidence</dt><dd>Every decision is hash-chained with signed checkpoints, and can be checked offline. The evidence pack maps to SOC 2 CC8.1, ISO/IEC 42001 and the EU AI Act.</dd></div>
+      <div><dt>What we store</dt><dd>Listed field by field on the <a href="security">Security</a> page.</dd></div>
+      <div><dt>Certifications</dt><dd>None yet: no SOC 2 report or ISO 27001 certificate. We say so up front.</dd></div>
+      <div><dt>Questionnaires and contracts</dt><dd>Send them to <a href="mailto:hello@squidbrake.com?subject=Security%20review">hello@squidbrake.com</a> or <a href="https://calendly.com/pulkitbatra2024/new-meeting-1" target="_blank" rel="noopener">book a call</a>.</dd></div>
+    </dl>
+
     <h2 class="plain">Questions</h2>
     <dl class="facts">
       <div><dt>Is anything held back from the free version?</dt><dd>No. The paid plans are hosting, setup and support. If you self-host, you have the same software we run.</dd></div>
       <div><dt>Where does my data live on a hosted plan?</dt><dd>On a server we operate. If it has to stay inside your network, self-host it, or take Enterprise and we'll set it up in your cloud. See <a href="security">Security</a> for exactly what's stored.</dd></div>
       <div><dt>Do you have SOC 2 or ISO 27001?</dt><dd>Not yet. We hold no certifications today. Squidbrake produces evidence for your audits; it doesn't make us certified.</dd></div>
       <div><dt>Who pays for the AI briefs?</dt><dd>You do, directly: they use your own Anthropic key, and are off until you add one.</dd></div>
-      <div><dt>What's not built yet?</dt><dd>Single sign-on, keeping data in a chosen region, uptime guarantees, and a console for service providers managing many client companies. They're listed so you don't have to ask.</dd></div>
+      <div><dt>What's on the roadmap?</dt><dd>Single sign-on and SCIM, streaming to your SIEM, keeping data in a chosen region, an uptime SLA, and a console for service providers managing many client companies. None is built yet; they're listed so you don't have to ask.</dd></div>
     </dl>
 
   </main>
 
-  <footer><span>© 2026 Squidbrake, Inc.</span><a class="ph-badge" href="https://www.producthunt.com/products/squidbrake?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-squidbrake" target="_blank" rel="noopener noreferrer"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&amp;theme=dark&amp;t=1791704247916"><img alt="Squidbrake - Change control for AI agents: sign-off, undo and a record | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&amp;theme=light&amp;t=1791704247916"></picture></a><span><a href="./">Home</a> · <a href="docs">Docs</a> · <a href="security">Security</a> · <a href="pricing">Pricing</a><a href="about">Team</a> · <a href="changelog">Changelog</a> ·  · <a href="mailto:hello@squidbrake.com">hello@squidbrake.com</a></span></footer>
+  <footer><span>© 2026 Squidbrake, Inc.</span><a class="ph-badge" href="https://www.producthunt.com/products/squidbrake?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-squidbrake" target="_blank" rel="noopener noreferrer"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&amp;theme=dark&amp;t=1791704247916"><img alt="Squidbrake - Change control for AI agents: sign-off, undo and a record | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&amp;theme=light&amp;t=1791704247916"></picture></a><span><a href="./">Home</a> · <a href="docs">Docs</a> · <a href="security">Security</a> · <a href="pricing">Pricing</a> · <a href="about">Team</a> · <a href="changelog">Changelog</a> · <a href="mailto:hello@squidbrake.com">hello@squidbrake.com</a></span></footer>
 </div>
 <script src="assets/booking.js" defer></script>
 </body>
