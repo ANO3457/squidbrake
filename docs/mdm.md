@@ -13,6 +13,11 @@ install is assigned per user, not once for all devices.
 
 Each release has a Windows MSI, a macOS .pkg (Apple silicon) and a Linux tarball, built by
 [`.github/workflows/native.yml`](../.github/workflows/native.yml). They hold Squidbrake and everything it needs.
+These links always give the newest one:
+
+- Windows: https://github.com/batrapulkit/squidbrake/releases/latest/download/squidbrake-windows-x64.msi
+- macOS (Apple silicon): https://github.com/batrapulkit/squidbrake/releases/latest/download/squidbrake-macos-arm64.pkg
+- Linux: https://github.com/batrapulkit/squidbrake/releases/latest/download/squidbrake-linux-x64.tar.gz
 
 - **Windows MSI.** Installs for one user, with no admin rights, into `%LOCALAPPDATA%\Programs\Squidbrake`, and adds it
   to that user's PATH. With `URL` and `KEY` it also connects that person's agents, which makes it a one-line Intune

@@ -77,6 +77,10 @@ jobs:
       - name: attach to the release
         if: github.event_name == 'release'
         shell: bash
-        run: gh release upload "${{ github.event.release.tag_name }}" out/* --clobber
+        # each file twice: with its version, and without it, so .../releases/latest/download/squidbrake-windows-x64.msi
+        # always gives the newest one (the link the docs use)
+        run: |
+          for f in out/*; do cp "$f" "${f/-$VERSION/}"; done
+          gh release upload "${{ github.event.release.tag_name }}" out/* --clobber
         env:
           GH_TOKEN: ${{ github.token }}
