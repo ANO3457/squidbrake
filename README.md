@@ -285,6 +285,16 @@ Next:
 
 Tell us what you need most with a 👍 or a comment on the issue.
 
+## Badge
+
+Using Squidbrake in a repo where agents work? Say so in its README:
+
+[![AI agents: protected by Squidbrake](https://img.shields.io/badge/AI%20agents-protected%20by%20Squidbrake-F2622E)](https://squidbrake.com/go/badge)
+
+```markdown
+[![AI agents: protected by Squidbrake](https://img.shields.io/badge/AI%20agents-protected%20by%20Squidbrake-F2622E)](https://squidbrake.com/go/badge)
+```
+
 ## Contributing, security, license
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) covers a 10-minute setup and

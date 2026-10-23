@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import os
 import re
@@ -23,6 +24,7 @@ import sqlite3
 import threading
 import time
 import urllib.request
+from urllib.parse import quote, urlencode
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1520,6 +1522,65 @@ async def one_site(request: Request, call_next):
         return RedirectResponse(PUBLIC_URL + request.url.path + (f"?{request.url.query}" if request.url.query else ""),
                                 status_code=301)
     return await call_next(request)
+
+
+# ---- share cards: one catch, a week, the incident score, as a page people post (squidbrake.com/caught?...).
+# Made from the link alone, nothing stored. Every field is one short word or a number, so a card can't carry a
+# command's arguments, a secret, or anyone's free text.
+WORD = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+AGENTS = {"claude-code": "Claude Code", "cursor": "Cursor", "codex": "Codex", "gemini-cli": "Gemini CLI",
+          "vscode": "VS Code Copilot", "antigravity": "Antigravity", "qwen-code": "Qwen Code",
+          "factory": "Factory Droid", "kiro": "Kiro"}       # connect.py AGENT_LABELS
+CAUGHT = {"blocked": "blocked it", "rejected": "held it, and a person said no",
+          "would-block": "would have blocked it", "would-hold": "would have held it for a person"}
+
+
+def _card(request: Request, path: str, query: dict, kicker: str, big: str, title: str, lines: list[str]) -> HTMLResponse:
+    url = f"{public_url(request)}{path}?{urlencode(query)}"
+    e = lambda s: html.escape(s, quote=True)
+    page = (PAGE("site/card.html").replace("__TITLE__", e(title)).replace("__DESC__", e(" · ".join(lines) or title))
+            .replace("__URL__", e(url)).replace("__KICKER__", e(kicker)).replace("__BIG__", e(big))
+            .replace("__LINES__", "".join(f"<li>{e(x)}</li>" for x in lines))
+            .replace("__X__", e(f"https://x.com/intent/post?text={quote(title)}&url={quote(url)}"))
+            .replace("__LI__", e(f"https://www.linkedin.com/sharing/share-offsite/?url={quote(url)}"))
+            .replace("__GO__", f"/go/share-{path.strip('/')}"))
+    return HTMLResponse(page)
+
+
+@app.get("/caught", response_class=HTMLResponse, include_in_schema=False)
+def caught_card(request: Request, what: str, outcome: str, agent: str = "", rule: str = "",
+                s: int | None = Query(None, ge=0, le=7 * 86400)):
+    """A dashboard's Share on one thing it caught: the program (never its arguments), the agent, the rule."""
+    if not WORD.match(what) or outcome not in CAUGHT or (rule and not WORD.match(rule)):
+        raise HTTPException(404)
+    who = AGENTS.get(agent, "An AI agent")
+    lines = [f"agent: {who}"] + ([f"rule: {rule}"] if rule else [])
+    if s is not None and outcome == "rejected":
+        lines.append(f"decided in {s} s" if s < 120 else f"decided in {round(s / 60)} min")
+    query = {k: v for k, v in {"what": what, "outcome": outcome, "agent": agent if agent in AGENTS else "", "rule": rule,
+                               "s": s if outcome == "rejected" else None}.items() if v not in ("", None)}
+    return _card(request, "/caught", query, "Caught by Squidbrake", what,
+                 f"{who} tried to run {what}. Squidbrake {CAUGHT[outcome]}.", lines)
+
+
+@app.get("/week", response_class=HTMLResponse, include_in_schema=False)
+def week_card(request: Request, e: int = Query(..., ge=0, le=10**8), h: int = Query(0, ge=0, le=10**8),
+              b: int = Query(0, ge=0, le=10**8), r: int = Query(0, ge=0, le=10**8), d: int = Query(7, ge=1, le=90)):
+    """A dashboard's Share my week: counts only."""
+    period = "day" if d == 1 else "week" if d == 7 else f"{d} days"
+    lines = [f"{e:,} actions checked", f"{h:,} held for a person", f"{r:,} rejected by a person", f"{b:,} blocked outright"]
+    return _card(request, "/week", {"e": e, "h": h, "b": b, "r": r, "d": d}, f"My AI agents, last {period}",
+                 f"{e:,} actions", f"My AI agents took {e:,} actions. {h + b:,} of them needed a brake.", lines)
+
+
+@app.get("/score", response_class=HTMLResponse, include_in_schema=False)
+def score_card(request: Request, n: int = Query(..., ge=0, le=100), of: int = Query(..., ge=1, le=100)):
+    """incidents/replay.py's result: how many real AI-agent incidents a set of rules stops."""
+    if n > of:
+        raise HTTPException(404)
+    return _card(request, "/score", {"n": n, "of": of}, "Real AI agent incidents, replayed", f"{n} / {of}",
+                 f"Squidbrake stopped {n} of {of} real AI agent incidents.",
+                 ["each one replayed step by step against the rules", "squidbrake.com/benchmark shows every one"])
 
 
 @app.get("/{page}", include_in_schema=False)

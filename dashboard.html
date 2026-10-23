@@ -671,7 +671,8 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     <section class="tiles" id="repTiles" aria-label="Report totals"></section>
     <section class="card">
       <div class="card-head"><h2>What it caught</h2><span class="sub" id="caughtSub"></span>
-        <span class="spacer"></span><button class="btn" id="copyWeekly" type="button">Copy weekly report</button></div>
+        <span class="spacer"></span><button class="btn" id="copyWeekly" type="button">Copy weekly report</button>
+        <button class="btn" id="shareWeek" type="button" title="A public card with these counts only, to post">Share my week</button></div>
       <div class="tbl-wrap"><table class="events"><thead><tr><th>Outcome</th><th>What the agent tried</th><th>Why</th>
         <th>What it would have done</th></tr></thead><tbody id="caughtList"></tbody></table></div>
       <p class="hint">Also sent every Monday to Slack, Teams or email when they're set up in Settings.</p>
@@ -2460,17 +2461,45 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     $("#caughtSub").textContent = w.caught.length ? `last ${repDays === 1 ? "24 hours" : repDays + " days"}` : "nothing stopped in this period";
     $("#caughtList").replaceChildren(...(w.caught.length ? w.caught.map((c) => el("tr", {},
       el("td", {}, el("b", { text: c.outcome.charAt(0).toUpperCase() + c.outcome.slice(1) }),
-        ...(c.by ? [el("div", { class: "sub", text: `by ${c.by}${c.note ? ': "' + c.note + '"' : ""}` })] : [])),
+        ...(c.by ? [el("div", { class: "sub", text: `by ${c.by}${c.note ? ': "' + c.note + '"' : ""}` })] : []),
+        ...(c.share ? [el("button", { class: "linkish", type: "button", text: "Share", onclick: () => shareCaught(c) })] : [])),
       el("td", {}, el("code", { text: c.what }), el("div", { class: "sub", text: c.agent || "" })),
       el("td", { class: "sub", text: c.why }),
       el("td", { class: "sub", text: c.effect || "—" })))
       : [el("tr", {}, el("td", { colspan: 4, class: "sub", text: "Nothing was blocked, rejected, or (in shadow mode) would have been." }))]));
   }
   $("#copyWeekly").addEventListener("click", (e) => copy(weeklyText, e.target));
+  // Share cards on squidbrake.com, made from the link alone: words and counts, never a command's arguments
+  const SHARE = "https://squidbrake.com";
+  const SHARE_OUTCOME = { "blocked": "blocked", "rejected": "rejected", "would have been blocked": "would-block",
+                          "would have waited for a person": "would-hold" };
+  function shareCaught(c) {
+    const s = c.share, q = new URLSearchParams({ what: s.what, outcome: SHARE_OUTCOME[c.outcome] });
+    if (s.agent) q.set("agent", s.agent);
+    if (s.rule) q.set("rule", s.rule);
+    if (s.decide_s != null) q.set("s", s.decide_s);
+    if (!confirm(`This opens a public page anyone can see:
+
+  ${s.what}${s.agent ? " · " + s.agent : ""}${s.rule ? " · rule " + s.rule : ""} · ${c.outcome}
+
+` +
+                 "Only the program's name, never its arguments, files or who approved. Open it?")) return;
+    window.open(`${SHARE}/caught?${q}`, "_blank", "noopener");
+  }
+  let lastSummary = null;
+  $("#shareWeek").addEventListener("click", () => {
+    const r = lastSummary;
+    if (!r) return;
+    const rejected = r.approvals.rejected, q = new URLSearchParams({ e: r.total, h: r.approvals.held, r: rejected,
+      b: Math.max(0, (r.by_status.denied || 0) - rejected), d: repDays });
+    if (!confirm(`This opens a public page with your counts only (${r.total} actions, ${r.approvals.held} held). Open it?`)) return;
+    window.open(`${SHARE}/week?${q}`, "_blank", "noopener");
+  });
   async function loadReports() {
     loadCaught();
     document.querySelectorAll("#repRange button").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.d === repDays)));
     const [r, log] = await Promise.all([api("/v1/reports/summary", { days: repDays }), api("/v1/audit/log", { limit: 40 })]);
+    lastSummary = r;
     const s = r.by_status, a = r.approvals;
     $("#printHead").replaceChildren(el("h1", { text: `AI agent activity report — last ${repDays === 1 ? "24 hours" : repDays + " days"}` }),
       el("div", { class: "muted", text: `Generated ${fmtDate(r.generated_at)} by ${me.client} · audit trail ${r.audit.ok ? "verified" : "BROKEN"} · fingerprint ${r.audit.head_hash || "—"}` }));

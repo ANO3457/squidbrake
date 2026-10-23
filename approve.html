@@ -66,6 +66,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .result.info .ic { background: var(--muted); }
 .result b { display: block; font-size: 18px; margin-bottom: 2px; }
 .muted { color: var(--muted); font-size: 14px; }
+.made { margin-top: 40px; font-size: 12px; text-align: center; }
+.made a { color: inherit; }
 .empty { text-align: center; color: var(--muted); padding: 40px 0; }
 .banner { border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; background: var(--bad); color: #fff; font-size: 15px; }
 input[type=password] { width: 100%; font: inherit; color: inherit; background: var(--page); border: 1px solid var(--border);
@@ -97,6 +99,7 @@ a { color: var(--accent); }
   <div id="stopBanner" class="banner" hidden></div>
   <div id="root"></div>
   <p class="muted" id="foot"></p>
+  <p class="muted made">Approvals by <a href="https://squidbrake.com/go/approve" target="_blank" rel="noopener">Squidbrake</a>: your AI agents ask, a person decides. Free and open source.</p>
 </main>
 
 <script>

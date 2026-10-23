@@ -2970,6 +2970,8 @@ def caught(days: int = 7, limit: int = 8) -> list[dict]:
         rows = conn.execute(select(events).where(
             events.c.created_at >= since, blocked | rejected | events.c.would.isnot(None))
             .order_by(events.c.created_at.desc()).limit(500)).all()
+    import connect
+    parse = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00"))
     out = []
     for r in rows:
         if r.would:
@@ -2985,9 +2987,16 @@ def caught(days: int = 7, limit: int = 8) -> list[dict]:
         what = (inp.get("command") if isinstance(inp, dict) else None) or r.name
         effect = next((s["message"] for s in json.loads(r.signals or "[]") if s.get("check") == "effect"), None)
         reason = (r.reason or "").removeprefix("Shadow mode, allowed. ")
-        out.append({"at": r.created_at, "agent": r.source or r.client, "tool": r.name, "what": str(what)[:120],
+        # What a share card may show (squidbrake.com/caught): the program, never its arguments; a known agent, never a key name
+        cmds = commands.read(what).commands if isinstance(inp, dict) and isinstance(inp.get("command"), str) else []
+        program = max(cmds, key=lambda c: commands.SEVERITY.index(c.kind)).program if cmds else r.name
+        agent = r.source or r.client
+        took = (parse(r.decided_at) - parse(r.created_at)).total_seconds() if outcome == "rejected" and r.decided_at else None
+        out.append({"at": r.created_at, "agent": agent, "tool": r.name, "what": str(what)[:120],
                     "why": reason[:200], "outcome": outcome, "by": r.decided_by if outcome == "rejected" else None,
-                    "note": r.decision_note if outcome == "rejected" else None, "effect": effect})
+                    "note": r.decision_note if outcome == "rejected" else None, "effect": effect,
+                    "share": {"agent": agent if agent in connect.AGENT_LABELS else None, "what": program,
+                              "rule": r.rule_id, "decide_s": None if took is None else round(took)}})
     out.sort(key=lambda x: x["at"], reverse=True)               # newest first...
     out.sort(key=lambda x: CAUGHT_ORDER[x["outcome"]])         # ...within blocked, rejected, would-block, would-hold
     seen, picked = set(), []
