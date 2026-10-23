@@ -77,6 +77,19 @@ dashboard's Team page; a persistent `keys.json` can.
 
 Back up the database (Supabase does daily backups on paid plans; otherwise `pg_dump`) **and** these files, together.
 
+## Moving a gateway that ran on SQLite
+
+The record moves with its audit chain: `squidbrake import-sqlite` copies every table as stored, so the chain and each
+action's fingerprints verify as before. Keep the data folder (keys, `ledger.key`, `secret.key`): the old checkpoints
+are signed with that ledger key.
+
+1. Stop the gateway (its agents wait, fail closed, for the minute this takes).
+2. Copy `gateway.db` aside as a backup.
+3. Set `DATABASE_URL` (and `DB_SCHEMA`) as above, then:
+   `squidbrake import-sqlite /path/to/gateway.db`. It prints the rows per table and checks the chain; it refuses a
+   database that already has a record.
+4. Start the gateway with the new settings and run `squidbrake audit verify`.
+
 ## A fresh database
 
 A gateway started on an empty database starts a new audit chain from its first entry. Records from an earlier

@@ -8,7 +8,8 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+# psycopg: the image runs on Postgres too (DATABASE_URL=postgresql://..., docs/postgres-supabase.md)
+RUN pip install -r requirements.txt "psycopg[binary]>=3.1"
 
 # Every module server.py imports (tests/test_packaging.py checks this list), plus the shipped-rules fingerprints
 COPY server.py service.py onboard.py shell_guard.py runs.py selfguard.py weekly.py integrity.py connect.py flow.py hooklog.py commands.py risk.py taint.py verify.py signing.py offline.py proof.py brief.py passkeys.py sso.py pilot.py evidence.py lockdown.py license.py mcp_catalog.py mcp_hub.py mcp_oauth.py outbound.py policy_edit.py siem.py gateway_proxy.py gw_async.py rules.yaml rules.shipped dashboard.html approve.html ./

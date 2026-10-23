@@ -5240,6 +5240,9 @@ def main(argv: list[str] | None = None) -> int:
     fb = sub.add_parser("feedback", help="say whether a hold or block was right: feedback EVENT_ID legit|right")
     fb.add_argument("event_id")
     fb.add_argument("verdict", choices=["legit", "right"])
+    im = sub.add_parser("import-sqlite", help="copy an SQLite gateway.db into this gateway's (empty) database, e.g. "
+                                              "Postgres: every table, the audit chain checked after")
+    im.add_argument("file", help="the old gateway.db")
     pl = sub.add_parser("pilot", help="join or leave a pilot: share usage counts (never content) with the Squidbrake team")
     pl.add_argument("action", choices=["join", "leave", "status"])
     pl.add_argument("code", nargs="?", help="the pilot code you were given (join)")
@@ -5253,7 +5256,8 @@ def main(argv: list[str] | None = None) -> int:
             "keys": _cli_keys, "verify": lambda a: verify.main([a.file]), "pilot": _cli_pilot,
             "evidence": _cli_evidence, "lockdown": _cli_lockdown, "explain": _cli_explain,
             "report": _cli_report, "feedback": _cli_feedback, "integrity": _cli_integrity,
-            "audit": _cli_audit, "capabilities": _cli_capabilities, "license": _cli_license}[args.cmd](args)
+            "audit": _cli_audit, "capabilities": _cli_capabilities, "license": _cli_license,
+            "import-sqlite": _cli_import_sqlite}[args.cmd](args)
 
 
 def _cli_capabilities(args) -> int:
@@ -5282,6 +5286,47 @@ def _cli_integrity(args) -> int:
         return 0
     print(f"Changed: {integrity.describe(changes)}.\nIf you did this, run: {CLI} integrity accept")
     return 1
+
+
+def import_sqlite(path: Path, batch: int = 1000) -> dict[str, int]:
+    """Every row of an SQLite gateway.db into this gateway's database, values as stored, so the audit chain and the
+    fingerprints of each action verify as before. Only into an empty record: run twice, it refuses. -> rows per table"""
+    src = create_engine(f"sqlite:///{Path(path).resolve().as_posix()}")
+    migrate(engine)
+    with engine.connect() as conn:
+        if conn.execute(select(events.c.id).limit(1)).first() or conn.execute(select(audit_trail.c.seq).limit(1)).first():
+            raise SystemExit("This gateway's database already has a record: import only into an empty one.")
+    have = set(sa_inspect(src).get_table_names())
+    copied = {}
+    with src.connect() as old, engine.begin() as new:
+        for table in metadata.sorted_tables:
+            if table.name not in have:
+                continue
+            cols = [table.c[c["name"]] for c in sa_inspect(src).get_columns(table.name) if c["name"] in table.c]
+            rows = old.execute(select(*cols).order_by(*table.primary_key.columns))
+            copied[table.name] = 0
+            while chunk := rows.fetchmany(batch):
+                new.execute(table.insert(), [dict(r._mapping) for r in chunk])
+                copied[table.name] += len(chunk)
+        if engine.dialect.name == "postgresql":     # counters carry on after the copied rows, not from 1
+            for table in metadata.sorted_tables:
+                for col in table.primary_key.columns:
+                    if col.autoincrement is True:
+                        new.execute(text(f"SELECT setval(pg_get_serial_sequence('{table.name}', '{col.name}'), "
+                                         f"COALESCE((SELECT MAX({col.name}) FROM {table.name}), 0) + 1, false)"))
+    return copied
+
+
+def _cli_import_sqlite(args) -> int:
+    if not Path(args.file).is_file():
+        print(f"No such file: {args.file}", file=sys.stderr)
+        return 1
+    copied = import_sqlite(Path(args.file))
+    for name, n in copied.items():
+        print(f"  {name:<18} {n:>8,} rows")
+    r = verify_audit_chain()
+    print(f"\nAudit chain: " + (f"intact, {r.get('entries')} entries" if r.get("ok") else f"BROKEN: {r.get('message', '')}"))
+    return 0 if r.get("ok") else 1
 
 
 def _cli_audit(args) -> int:
