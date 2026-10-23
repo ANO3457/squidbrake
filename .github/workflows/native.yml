@@ -47,13 +47,7 @@ jobs:
           # not make an empty installer
           wix build packaging/native/squidbrake.wxs -wx -d Version=$VERSION -bindpath "src=$GITHUB_WORKSPACE/dist/squidbrake" \
             -o out/squidbrake-$VERSION-${{ matrix.name }}.msi
-      - name: installers hold the program
-        shell: bash
-        run: |
-          for f in out/*; do
-            size=$(wc -c < "$f"); echo "$f: $size bytes"
-            [ "$size" -gt 10000000 ] || { echo "$f is too small to hold Squidbrake"; exit 1; }
-          done
+          rm -f out/*.wixpdb      # WiX's debug file, not something to ship
       - name: pkg
         if: runner.os == 'macOS'
         run: |
@@ -65,6 +59,13 @@ jobs:
       - name: tarball
         if: runner.os == 'Linux'
         run: mkdir -p out && tar -C dist -czf out/squidbrake-$VERSION-${{ matrix.name }}.tar.gz squidbrake
+      - name: installers hold the program
+        shell: bash
+        run: |
+          for f in out/*; do
+            size=$(wc -c < "$f"); echo "$f: $size bytes"
+            [ "$size" -gt 10000000 ] || { echo "$f is too small to hold Squidbrake"; exit 1; }
+          done
 
       - uses: actions/attest-build-provenance@v2
         with:
