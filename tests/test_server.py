@@ -36,7 +36,8 @@ rules:
 upstreams:
   echo: http://upstream.test
 """)
-os.environ.update(DATABASE_URL=f"sqlite:///{TMP / 'gw.db'}", RULES_PATH=str(RULES),
+# TEST_DATABASE_URL: the same tests against Postgres (the CI job "postgres"); otherwise a fresh SQLite file
+os.environ.update(DATABASE_URL=os.getenv("TEST_DATABASE_URL") or f"sqlite:///{TMP / 'gw.db'}", RULES_PATH=str(RULES),
                   GATEWAY_API_KEYS="tester:k1,boss:k2,boss2:k3", GATEWAY_APPROVERS="boss,boss2")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

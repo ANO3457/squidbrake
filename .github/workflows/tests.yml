@@ -16,6 +16,42 @@ jobs:
       - run: pytest -q
       - run: python tests/e2e_business_scenario.py
 
+  postgres:
+    # the gateway's own tests against Postgres, as given by Supabase (postgres://), once in public and once in a schema
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: gw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: ci-only
+      TESTS: >-
+        tests/test_postgres.py tests/test_server.py tests/test_approval_integrity.py tests/test_audit.py
+        tests/test_capabilities.py tests/test_change_control.py tests/test_steering.py tests/test_team_features.py
+        tests/test_threat_model.py tests/test_reported_bypasses.py tests/test_unreadable.py tests/test_observe_report.py
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt "psycopg[binary]>=3.1" pytest
+      - name: tables in public
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci-only@localhost:5432/gw
+        run: pytest -q $TESTS
+      - name: tables in their own schema (DB_SCHEMA)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:ci-only@localhost:5432/gw_schema
+          DB_SCHEMA: squidbrake
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE gw_schema"
+          pytest -q $TESTS
+
   package:
     # what `pip install squidbrake` gets: build the wheel, install it on its own, start it, block something
     runs-on: ubuntu-latest
