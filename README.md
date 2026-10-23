@@ -255,6 +255,21 @@ The first run in a terminal says so, and asks, optionally, for your work email a
 give an email are it, your name and the names of the coding agents installed here sent). `squidbrake telemetry status` shows exactly what is sent, and `DO_NOT_TRACK=1`
 turns it off. Details: [docs/operations.md](docs/operations.md#usage-sharing).
 
+## What is stored
+
+The gateway keeps its record in its database (SQLite on your machine by default, or the Postgres you point it at):
+
+- **Each action**: who asked, the tool, the decision and why, and a **redacted** copy of the input and output.
+  Redaction removes values under secret-looking names (`password`, `token`, `api_key`, ...) and strings that look
+  like keys or tokens, and masks emails and card numbers (on by default). It works on names and patterns, so a secret
+  written in free text can survive. Long inputs are cut to `MAX_PAYLOAD_CHARS`.
+- **The audit trail**: every decision and change, hash-chained, with fingerprints of each action's input and output.
+- **Chains**: what an agent's earlier steps gave it (the `after:` capabilities), until they expire.
+- **Approvals, notes, snapshots** taken before risky changes, usage, and the passkeys used to sign approvals.
+
+With Postgres, whoever runs that database (Supabase, your cloud) holds this data. The keys and signing secrets stay
+out of the database: [docs/postgres-supabase.md](docs/postgres-supabase.md) says what to back up besides it.
+
 ## Documentation
 
 | | |

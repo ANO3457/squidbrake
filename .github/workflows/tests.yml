@@ -30,10 +30,11 @@ jobs:
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       PGPASSWORD: ci-only
+      # in the order a plain `pytest` runs them: some read reports over the whole shared database
       TESTS: >-
-        tests/test_postgres.py tests/test_server.py tests/test_approval_integrity.py tests/test_audit.py
-        tests/test_capabilities.py tests/test_change_control.py tests/test_steering.py tests/test_team_features.py
-        tests/test_threat_model.py tests/test_reported_bypasses.py tests/test_unreadable.py tests/test_observe_report.py
+        tests/test_approval_integrity.py tests/test_audit.py tests/test_capabilities.py tests/test_change_control.py
+        tests/test_observe_report.py tests/test_postgres.py tests/test_reported_bypasses.py tests/test_server.py
+        tests/test_steering.py tests/test_team_features.py tests/test_threat_model.py tests/test_unreadable.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
