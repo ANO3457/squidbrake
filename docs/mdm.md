@@ -22,7 +22,7 @@ These links always give the newest one:
 - **Windows MSI.** Installs for one user, with no admin rights, into `%LOCALAPPDATA%\Programs\Squidbrake`, and adds it
   to that user's PATH. With `URL` and `KEY` it also connects that person's agents, which makes it a one-line Intune
   Win32 app (install behavior: User):
-  `msiexec /i squidbrake-VERSION-windows-x64.msi /qn URL=https://gateway.yourcompany.com KEY=gw_...`
+  `msiexec /i squidbrake-windows-x64.msi /qn URL=https://gateway.yourcompany.com KEY=gw_...`
 - **macOS .pkg.** Installs into `/usr/local/lib/squidbrake` and links `/usr/local/bin/squidbrake`. Jamf can deploy it
   as a package. Then run `squidbrake connect all --url ... --key ...` as the user, for example with the Jamf script
   below.
