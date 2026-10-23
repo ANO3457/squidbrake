@@ -61,8 +61,8 @@ The first start installs everything, prints an **admin** key (for the dashboard)
 setting in `.env.example` is optional.
 
 The first start in a terminal also asks once whether to keep Squidbrake running in the background, so your agents
-(which fail closed) are never locked out because it's down. Enter means no; nothing is installed without a yes,
-and scripts or CI are never asked. A yes adds a login item: a LaunchAgent on macOS, a systemd user service on
+(which fail closed) are never locked out because it's down. Enter means yes (type n to keep it in the window);
+scripts or CI are never asked and get no service. It adds a login item: a LaunchAgent on macOS, a systemd user service on
 Linux, a `Run` registry value on Windows (some endpoint security tools flag these, so check with IT first).
 `squidbrake start --background` installs it without asking (or set `SQUIDBRAKE_BACKGROUND=1` for unattended
 installs), `squidbrake service status` checks it, `squidbrake service stop` takes it out, and `squidbrake run`

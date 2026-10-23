@@ -119,7 +119,11 @@ def previous_key(settings: dict, url: str) -> str | None:
 def confirm(question: str, yes: bool) -> bool:
     if yes:
         return True
-    return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:      # no one to answer (a script, CI): a no, said plainly instead of a traceback
+        print("\nNo answer (not run in a terminal). Add --yes to go ahead without asking.")
+        return False
 
 
 def claude_code(args) -> None:
@@ -724,6 +728,46 @@ def set_agent(name: str, on: bool, url: str) -> None:
         agents(args)
         if name in ("cursor", "vscode", "gemini-cli", "antigravity", "qwen-code"):
             guard(args)
+    remember_off([name], not on)
+
+
+def _off_path() -> Path:
+    import service
+    return Path(os.getenv("SQUIDBRAKE_AGENTS_OFF") or service.state_dir() / "agents-off.json")
+
+
+def agents_off() -> set[str]:
+    """Agents a person took out on purpose: auto_connect leaves them alone."""
+    try:
+        return set(json.loads(_off_path().read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def remember_off(names: list[str], off: bool) -> None:
+    now = agents_off() | set(names) if off else agents_off() - set(names)
+    try:
+        _off_path().parent.mkdir(parents=True, exist_ok=True)
+        _off_path().write_text(json.dumps(sorted(now)), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def auto_connect() -> list[str]:
+    """Install once, covered everywhere: an agent installed after setup (Cursor next week) gets the hook the way setup
+    would have given it. Only where Squidbrake is set up (another agent's hook points at a gateway), never an agent a
+    person took out. -> the agents connected now."""
+    import contextlib
+    import io
+    hooked = _hooked_gateway()
+    if not hooked:
+        return []
+    off = agents_off()
+    new = [a["name"] for a in local_agents() if a["present"] and not a["connected"] and a["name"] not in off]
+    for name in new:
+        with contextlib.redirect_stdout(io.StringIO()):
+            set_agent(name, True, hooked[0])
+    return new
 
 
 def connected_agents() -> list[str]:
@@ -1029,7 +1073,8 @@ def doctor(args) -> int:
         try:
             import integrity
             import server
-            changes = integrity.compare(server.KEYS_PATH.parent, integrity.current(*server._integrity_inputs()))
+            # the gateway's own snapshot: without the key files and version, every key file looks removed
+            changes = integrity.compare(server.KEYS_PATH.parent, server.integrity_now())
             if changes:
                 say("X", f"Squidbrake's own files changed: {integrity.describe(changes)}",
                     "if you did this: squidbrake integrity accept. If not, look at what your agents did just before")
@@ -1083,6 +1128,7 @@ def connect_all(args) -> None:
         sys.exit(f"unknown agent {', '.join(bad)}; pick from: {', '.join(sorted(known))}")
     claude = (bool(shutil.which("claude")) or (Path.home() / ".claude").exists()) and (not only or "claude-code" in only)
     others = [a for a in only if a != "claude-code"]
+    remember_off(only or sorted(known), args.remove)      # taken out by a person: the gateway won't put it back
     steps = getattr(args, "steps", True)       # `squidbrake setup` runs this as one of its own steps: no header
     if not args.remove:
         if steps:

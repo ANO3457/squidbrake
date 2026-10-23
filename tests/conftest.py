@@ -11,6 +11,9 @@ os.environ["SQUIDBRAKE_TELEMETRY"] = "0"
 # The hooks keep a copy of the rules' offline settings (offline.py): in a temporary folder, never the real ~/.squidbrake.
 os.environ["SQUIDBRAKE_OFFLINE_DIR"] = tempfile.mkdtemp(prefix="squidbrake-offline-")
 
+# The agents a person took out (connect.py remember_off): in a temporary folder, never the real ~/.squidbrake.
+os.environ["SQUIDBRAKE_AGENTS_OFF"] = os.path.join(tempfile.mkdtemp(prefix="squidbrake-off-"), "agents-off.json")
+
 # `squidbrake doctor` tells the team's gateway which agents a computer has: never from the tests.
 os.environ["SQUIDBRAKE_NO_INVENTORY"] = "1"
 

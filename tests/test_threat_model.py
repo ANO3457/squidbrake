@@ -58,6 +58,14 @@ def test_integrity_sees_our_hook_removed_but_not_other_settings(machine, monkeyp
     assert server.check_integrity() == []
 
 
+def test_doctor_sees_the_same_as_the_gateway(machine):
+    """doctor once compared without the key files and version: keys.json always looked removed."""
+    machine["data"].mkdir()
+    (machine["data"] / "keys.json").write_text('{"keys": {}}')
+    assert server.check_integrity() == []
+    assert integrity.compare(server.KEYS_PATH.parent, server.integrity_now()) == []
+
+
 def test_fail_closed_blocks_risky_actions_until_accepted(c, machine, monkeypatch, tmp_path):
     rules = tmp_path / "gw-rules.yaml"
     rules.write_text("default: allow\nintegrity: fail_closed\nrules:\n  - { id: pay, action: review, match: { name: 'pay.*' } }\n")

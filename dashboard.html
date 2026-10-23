@@ -1693,7 +1693,7 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
     } catch (e) {
       if (g !== gen) return;
       if (e instanceof AuthError) { setConn("err", "API key required"); openKeyDialog(!!apiKey); }
-      else setConn("err", "Can't reach gateway");
+      else setConn("err", e.message.startsWith("403") ? "Not allowed with this key" : "Can't reach gateway");
     }
   }
   // User actions start a new generation and always run.
@@ -1731,6 +1731,11 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
   // ---------- approvals
   async function loadMe() {
     me = await api("/v1/me");
+    if (me.kind === "agent") {   // it gets in, but every read is 403: say why, not "can't reach gateway"
+      openKeyDialog(true, `"${me.client}" is an agent's key: agents send actions, they can't open the dashboard. ` +
+        "Paste a person's key (make one with: squidbrake add-key YOUR-NAME --approver).");
+      throw new AuthError("agent key");
+    }
     // the Team plan (license.py): what blocks and holds is free; a team's features need a license after the grace date
     const lic = me.license, card = $("#planCard");
     if (lic && card) {
@@ -2188,10 +2193,10 @@ dialog input#stopReason { width: 100%; border: 1px solid var(--border); backgrou
   }
 
   // ---------- key dialog
-  function openKeyDialog(wasWrong) {
+  function openKeyDialog(wasWrong, why) {
     const dlg = $("#keyDlg");
     if (dlg.open) return;
-    $("#keyErr").textContent = wasWrong ? "That key was rejected." : "";
+    $("#keyErr").textContent = why || (wasWrong ? "That key was rejected." : "");
     $("#keyInput").value = "";
     dlg.showModal();
     $("#keyInput").focus();

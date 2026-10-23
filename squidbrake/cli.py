@@ -130,7 +130,7 @@ def main() -> int:
         import flow
         if argv[:2] == ["connect", "all"] and "--remove" not in argv:
             flow.header(2)
-        elif not argv or argv[0] == "start" or (argv[0].startswith("-") and argv[0] not in ("-h", "--help")):
+        elif argv and (argv[0] == "start" or (argv[0].startswith("-") and argv[0] not in ("-h", "--help"))):
             import service
             if service.is_first_start(argv):
                 flow.header(3)
@@ -188,8 +188,11 @@ def main() -> int:
         import service
         return service.main(argv)
     if not argv or (argv[0].startswith("-") and argv[0] not in ("-h", "--help")):
-        import service   # `squidbrake` or `squidbrake --port 9000`: asks once before installing anything
-        return service.main(["start", *argv])
+        import service
+        if not argv and service.is_first_start(argv):   # the first `squidbrake` after pip install: set it all up
+            import onboard
+            return onboard.main([])
+        return service.main(["start", *argv])            # `squidbrake --port 9000`, or any later start
     import server
     return server.main(argv)
 

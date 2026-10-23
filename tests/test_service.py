@@ -107,13 +107,20 @@ def test_no_terminal_never_installs_or_remembers(mac, monkeypatch):
     assert service._saved_choice() is None
 
 
-def test_enter_means_no_and_is_asked_only_once(mac):
+def test_no_runs_in_the_window_and_is_asked_only_once(mac):
     did, answer = mac
-    answer("")
+    answer("n")
     service.start([])
     service.start([])
     assert did == {"installed": False, "foreground": 2, "asked": 1}
     assert service._saved_choice() is False
+
+
+def test_enter_means_yes(mac):
+    did, answer = mac
+    answer("")
+    service.start([])
+    assert did["installed"] and did["foreground"] == 0 and service._saved_choice() is True
 
 
 def test_yes_installs_the_service(mac):

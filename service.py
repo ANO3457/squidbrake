@@ -1,9 +1,9 @@
 """
 Optionally keep the gateway running in the background, started again whenever you log in and whenever it stops.
-Nothing is installed without a yes: adding a login item can trip the endpoint security tools many companies run.
+Asked first (Enter means yes): adding a login item can trip the endpoint security tools many companies run.
 
   python service.py start [RUN OPTIONS]   what `squidbrake`, start.sh and start.bat do. The first time, in a terminal,
-                                          it asks once whether to run in the background (Enter means no) and
+                                          it asks once whether to run in the background (Enter means yes) and
                                           remembers the answer. No terminal (scripts, CI) means no, and nothing is
                                           remembered. RUN OPTIONS go to `server.py run`, e.g. --port 9000
   python service.py start --background    install the service and start it, without asking
@@ -336,11 +336,11 @@ def _ask(kind: str) -> bool | None:
     print(f"it's down. That adds {_where(kind)},")
     print("which starts it at every login and again if it stops. Turn it off any time: " + _cli("stop"))
     try:
-        answer = input("Run Squidbrake in the background? [y/N] ").strip().lower()
+        answer = input("Run Squidbrake in the background? [Y/n] ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
         return None
-    if answer not in ("y", "yes"):
+    if answer in ("n", "no"):   # Enter means yes: in a window that gets closed, every agent's action is blocked
         print("\nRunning in this window. Keep it open: while Squidbrake isn't running, your agents' actions are blocked.\n"
               f"Start it again with: {_cli('start')}   (or in the background: {_cli('start --background')})\n"
               "Once it's running, quit and reopen your agents (Claude Code, Cursor, Codex, ...), then work as usual.\n")

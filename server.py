@@ -2904,13 +2904,18 @@ def _integrity_inputs() -> tuple[Path, Path | None, dict[str, Path]]:
     return RULES_PATH, package, hooks
 
 
+def integrity_now() -> dict:
+    """What the integrity check compares: the hooks, package and rules, the version, and the key files."""
+    return {**integrity.current(*_integrity_inputs()), "version": VERSION, "keys": integrity.keys_state(KEYS_PATH.parent)}
+
+
 _integrity_lock = threading.Lock()   # the minute check and `integrity accept` never interleave
 
 
 def check_integrity() -> list[dict]:
     """Compare with the copy kept the first time; a new change is recorded once and sent where approvals go."""
     with _integrity_lock:
-        now = {**integrity.current(*_integrity_inputs()), "version": VERSION, "keys": integrity.keys_state(KEYS_PATH.parent)}
+        now = integrity_now()
         changes = integrity.compare(KEYS_PATH.parent, now)
         # a person's rules edit, a newly connected agent, a secret made the first time: the new normal
         if changes and all(c["kind"] == "rules" or (c["kind"] in ("hooks", "keys") and c["change"] == "added")
@@ -2935,11 +2940,27 @@ def check_integrity() -> list[dict]:
 
 def accept_integrity(who: str) -> None:
     with _integrity_lock:
-        integrity.accept(KEYS_PATH.parent, {**integrity.current(*_integrity_inputs()), "version": VERSION,
-                                            "keys": integrity.keys_state(KEYS_PATH.parent)})
+        integrity.accept(KEYS_PATH.parent, integrity_now())
         with audited_tx() as conn:
             state_set(conn, "integrity", {"changes": [], "at": utcnow()})
             audit(conn, who, "integrity.accepted", None)
+
+
+async def _auto_connect_loop():
+    """Every 10 minutes: an AI agent installed since setup gets Squidbrake's hook (connect.auto_connect), so nobody
+    has to connect it by hand. Off with SQUIDBRAKE_AUTO_CONNECT=0."""
+    import connect
+    await asyncio.sleep(60)
+    while True:
+        try:
+            if added := await run_in_threadpool(connect.auto_connect):
+                with audited_tx() as conn:
+                    audit(conn, "gateway", "agents.connected", None, agents=added, why="installed after setup")
+                notify_text("Squidbrake: new agents connected", f"{', '.join(connect.AGENT_LABELS.get(a, a) for a in added)} "
+                            "installed on this computer, now checked by Squidbrake. Restart it once to load the hook.")
+        except Exception:
+            log.exception("couldn't connect newly installed agents")
+        await asyncio.sleep(600)
 
 
 def purge_expired_capabilities() -> None:
@@ -3102,6 +3123,10 @@ async def lifespan(app: FastAPI):
              asyncio.create_task(_integrity_loop())]
     if RETENTION_DAYS > 0:
         tasks.append(asyncio.create_task(_retention_loop()))
+    # a person's own computer, started with `run` (not Docker, a server, or the tests): agents installed later join
+    if os.getenv("SQUIDBRAKE_LISTEN_PORT") and not (IN_DOCKER or PUBLIC_URL) and \
+            os.getenv("SQUIDBRAKE_AUTO_CONNECT", "1").strip().lower() not in ("0", "no", "false", "off"):
+        tasks.append(asyncio.create_task(_auto_connect_loop()))
     # usage counts for the pilot programme: does nothing unless this install joined one (squidbrake pilot join)
     tasks.append(asyncio.create_task(pilot.loop(PILOT_DIR, lambda: pilot.usage(
         engine, events, policy.mode, len(policy.rules), VERSION,

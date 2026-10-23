@@ -114,7 +114,7 @@ def test_first_start_is_step_3_and_ends_with_setup_complete(mac, monkeypatch, ca
 
 
 def test_no_to_the_background_still_says_the_last_step(mac, monkeypatch, capsys):
-    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
     service.start([])
     out = capsys.readouterr().out
     assert mac["foreground"] == 1 and "step 3 of 3" in out
