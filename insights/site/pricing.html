@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Squidbrake pricing</title>
-<meta name="description" content="Squidbrake plans: Free, Team $499 a month (14-day trial), Business and Enterprise priced with you. What each includes, in the open.">
+<meta name="description" content="Squidbrake plans: Free, Team $499 a month (14-day trial), Enterprise priced with you. What each includes, in the open.">
 <link rel="canonical" href="https://squidbrake.com/pricing">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23DCE3D8%22/%3E%3Cg%20transform%3D%22translate%288%207%29%20scale%28.75%29%22%3E%3Cpath%20fill%3D%22%231E2A23%22%20d%3D%22M16%2030V21.5C16%2012.4%2023.2%205%2032%205C40.8%205%2048%2012.4%2048%2021.5V30Z%22/%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%231E2A23%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%3E%3Cpath%20d%3D%22M23%2034V48.2C23%2051.4%2021.7%2053.9%2019.6%2055.8%22/%3E%3Cpath%20d%3D%22M32%2034V44.6%22/%3E%3Cpath%20d%3D%22M41%2034V48.2C41%2051.4%2042.3%2053.9%2044.4%2055.8%22/%3E%3C/g%3E%3Ccircle%20fill%3D%22%231E2A23%22%20cx%3D%2232%22%20cy%3D%2252.6%22%20r%3D%222.9%22/%3E%3Crect%20fill%3D%22%23F2622E%22%20x%3D%2211%22%20y%3D%2224.5%22%20width%3D%2242%22%20height%3D%2211%22%20rx%3D%225.5%22/%3E%3Ccircle%20fill%3D%22%232FD574%22%20cx%3D%2241.2%22%20cy%3D%2230%22%20r%3D%222.5%22/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -74,12 +74,11 @@ dl.facts dd{margin:2px 0 0;color:var(--muted)}
 h2.plain{display:block;margin:44px 0 6px}
 @media (max-width:560px){ .rel{grid-template-columns:80px 1fr} .rel time{display:none} td:first-child{white-space:normal} }
 .ph-badge{display:inline-block;line-height:0}.ph-badge img{max-width:100%;height:auto}
-.plans{display:grid;grid-template-columns:1fr;gap:12px;margin:8px 0 28px}
-.plan{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px 24px;display:grid;grid-template-columns:200px 1fr;grid-template-rows:auto auto auto 1fr;column-gap:32px}
-.plan>*{grid-column:1}
-.plan>ul{grid-column:2;grid-row:1 / span 4;margin:0}
+.plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:8px 0 28px}
+.plan{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column}
+.plan>ul{margin:0 0 14px}
 .plan .cta{align-self:end}
-@media (max-width:560px){ .plan{display:flex;flex-direction:column;padding:18px 16px} .plan>ul{margin:0 0 14px} }
+@media (max-width:760px){ .plans{grid-template-columns:1fr} .plan{padding:18px 16px} }
 .plan.pick{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
 .plan h3{margin:0 0 4px;font-weight:500;font-size:1.15rem;letter-spacing:-0.02em}
 .plan .price{font-size:1.9rem;font-weight:500;letter-spacing:-0.04em;margin:6px 0 0}
@@ -131,25 +130,17 @@ h2.plain{display:block;margin:44px 0 6px}
         <a class="cta" href="/signup?plan=team&amp;from=pricing">Start a 14-day trial</a>
       </section>
       <section class="plan">
-        <h3>Business</h3>
-        <p class="price">Custom</p><p class="per">several teams, priced with you</p>
-        <ul>
-          <li>Everything in Team, for up to five teams</li>
-          <li>A monthly review of what it caught and which rules to change</li>
-          <li>Evidence packs checked with you before an audit</li>
-          <li>A shared Slack channel, same-business-day answers</li>
-        </ul>
-        <a class="cta" href="https://calendly.com/pulkitbatra2024/new-meeting-1" target="_blank" rel="noopener">Book a call</a>
-      </section>
-      <section class="plan">
         <h3>Enterprise</h3>
         <p class="price">Custom</p><p class="per">yearly, set up with you</p>
         <ul>
-          <li>Everything in Business, for every team</li>
+          <li>Everything in Team, for every team</li>
           <li>Runs in your own cloud or VPC, set up with us; your agents&#39; data never reaches ours</li>
           <li>Your security review: questionnaires answered, architecture and data-flow walked through</li>
           <li>Rules and connectors built for your systems</li>
-          <li>A named contact and a yearly contract your procurement team can sign</li>
+          <li>A monthly review of what it caught and which rules to change</li>
+          <li>Evidence packs checked with you before an audit</li>
+          <li>A named contact, a shared Slack channel and same-business-day answers</li>
+          <li>A yearly contract your procurement team can sign</li>
           <li><span class="soon">Roadmap</span> Single sign-on and SCIM, a data region you choose, an uptime SLA</li>
         </ul>
         <a class="cta" href="https://calendly.com/pulkitbatra2024/new-meeting-1" target="_blank" rel="noopener">Book a call</a>
