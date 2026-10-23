@@ -197,7 +197,7 @@ a{color:inherit}
 .tag[data-state="blocked"] .tag-stamp{opacity:1;transform:rotate(-8deg) scale(1)}
 .narrow .tag{width:254px}
 .narrow .tag[data-state="done"]{opacity:0}
-.narrow .wire,.narrow .anchor,.narrow .packet,.narrow .tag-hole{display:none}
+.narrow .wire,.narrow .anchor,.narrow .packet,.narrow .tag-hole,.narrow .chip{display:none}   /* on a phone the chip lands on the card */
 .narrow .tag-frame,.narrow .tag.side-l .tag-frame{clip-path:polygon(18px 0,calc(100% - 18px) 0,100% 18px,100% 100%,0 100%,0 18px)}
 .narrow .tag-body,.narrow .tag.side-l .tag-body{padding:13px 16px 12px}
 
@@ -584,7 +584,8 @@ section .fine code,.faq code{font:400 .92em var(--mono)}
   .biz{grid-template-columns:repeat(2,minmax(0,1fr));gap:28px}
   .conn{grid-template-columns:1fr;gap:28px}
 }
-@media (max-width:560px){ .eyebrow .oss,.spec-more{display:none} .eyebrow{margin-bottom:16px} .biz{grid-template-columns:1fr} }
+@media (max-width:560px){ .hero-side .ph-badge,.hero-side .speed{display:none}   /* else they sit on the 3D scene's cards */
+  .eyebrow .oss,.spec-more{display:none} .eyebrow{margin-bottom:16px} .biz{grid-template-columns:1fr} }
 @media (max-width:900px){
   .prod-head,.callouts-row{grid-template-columns:1fr;gap:20px}
   .shot{margin-top:32px;border-radius:10px}
@@ -735,7 +736,7 @@ section .fine code,.faq code{font:400 .92em var(--mono)}
           <div class="cta-pick"><a class="btn ghost" href="#demo" data-demo>Book a demo</a><span>Security or platform team</span></div>
         </div>
         <a class="ph-badge" href="https://www.producthunt.com/products/squidbrake?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-squidbrake" target="_blank" rel="noopener noreferrer"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&amp;theme=dark&amp;t=1791704247916"><img alt="Squidbrake - Change control for AI agents: sign-off, undo and a record | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275992&amp;theme=light&amp;t=1791704247916"></picture></a>
-        <p class="spec"><strong>The check takes 9 ms at p95.</strong> <span class="spec-more">Your model takes seconds to decide. The check is the cheap part.</span><span class="live" aria-hidden="true"><i></i>last check <b id="lastMs">4</b> ms</span></p>
+        <p class="spec speed"><strong>The check takes 9 ms at p95.</strong> <span class="spec-more">Your model takes seconds to decide. The check is the cheap part.</span><span class="live" aria-hidden="true"><i></i>last check <b id="lastMs">4</b> ms</span></p>
       </div>
     </main>
   </div>

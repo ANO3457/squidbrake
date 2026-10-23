@@ -1,0 +1,4 @@
+#!/bin/sh
+# macOS .pkg: the program is in /usr/local/lib/squidbrake; put `squidbrake` on the PATH.
+ln -sf /usr/local/lib/squidbrake/squidbrake /usr/local/bin/squidbrake
+exit 0
