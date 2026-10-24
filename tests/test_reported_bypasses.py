@@ -56,11 +56,17 @@ REPORTED = [
     ("cd ~/.squidbrake, then read keys.json", ["cd ~/.squidbrake && cat data/keys.json"]),
     ("cd ~/.squidbrake, then write an approver key", ["cd ~/.squidbrake && echo '{}' > data/keys.json"]),
     ("cd ~/.squidbrake, then write it from python -c", ["cd ~/.squidbrake && python3 -c \"open('data/keys.json','w')\""]),
+    # reported 24 Oct by a hosted pilot: Claude deleted server.py without a hold. Ways round rm / Remove-Item:
+    (".NET File.Delete from PowerShell", ['[System.IO.File]::Delete("server.py")']),
+    ("git rm -f (uncommitted changes too)", ["git rm -f server.py"]),
+    ("git checkout -- file (throws changes away)", ["git checkout -- server.py"]),
+    ("git restore file (throws changes away)", ["git restore server.py"]),
 ]
 EVERYDAY = ["npm install --ignore-scripts", "curl -s -o data.json https://api.example.com/x", "bash build.sh",
             "cat data.json | python3 -m json.tool", "scp dist.tgz deploy@host:/srv/", "source .venv/bin/activate",
             "curl -d '{\"q\":1}' https://api.example.com/search", "chmod +x build.sh",
-            "source ./setup.sh", "curl -s https://api.example.com/x > data.json", "python -m pytest -q", "uv run pytest"]
+            "source ./setup.sh", "curl -s https://api.example.com/x > data.json", "python -m pytest -q", "uv run pytest",
+            "git rm old.py", "git rm --cached build.log", "git checkout -b feature/x", "git restore --staged server.py"]
 
 
 @pytest.fixture()

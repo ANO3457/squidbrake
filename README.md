@@ -165,7 +165,7 @@ The incidents and the session benchmark run in CI, so they can't quietly stop be
   - Examples: Replit's production database, the Railway volume deletion, GitHub MCP, Supabase MCP, CurXecute.
   - **14 of 15 harmful actions are stopped.**
 - **Reported bypasses:** every way around Squidbrake that someone sent us is a test that must stay stopped on
-  every release ([tests/test_reported_bypasses.py](tests/test_reported_bypasses.py)): **34 of 34 stopped**, and
+  every release ([tests/test_reported_bypasses.py](tests/test_reported_bypasses.py)): **38 of 38 stopped**, and
   the everyday variants of each still run.
   - The one not stopped is listed and explained: a malicious MCP server adds a BCC inside itself, after the check.
 - **Whole sessions:** in [bench/chains/](bench/chains/), Squidbrake stops 65 of 66 harmful steps and holds 3 of 41

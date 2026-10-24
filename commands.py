@@ -639,6 +639,10 @@ def classify(words: list[str], raw: str = "", depth: int = 0) -> tuple[list[Comm
     if prog == "truncate" or prog in ("clear-content", "clc") or (prog == "mv" and any(w in ("/dev/null", "nul") for w in lower[1:])):
         cmd.kind, cmd.why = "irreversible", f"empties or discards files ({' '.join(words[:3])})"
         return [cmd], []
+    # PowerShell reaching .NET: [System.IO.File]::Delete("x"), [IO.Directory]::Delete("x", $true), (Get-Item x).Delete()
+    if re.search(r"\]::delete\s*\(|\)\.delete\(\s*\)", " ".join(lower)):
+        cmd.kind, cmd.why = "irreversible", f"deletes files ({' '.join(words)})"
+        return [cmd], []
 
     # ---- only looks
     if prog in READ_ONLY:
@@ -717,7 +721,11 @@ def _git(cmd: Command, words: list[str]) -> Command:
         cmd.kind, cmd.why = "irreversible", f"deletes untracked files ({' '.join(words)})"
     elif sub == "branch" and ("D" in letters or ("d" in letters and "f" in letters) or "--delete" in args and "--force" in args):
         cmd.kind, cmd.why = "irreversible", f"force-deletes a branch ({' '.join(words)})"
-    elif sub in ("checkout", "restore") and ("." in args or "--" in args and args[-1:] == ["."]):
+    elif sub == "rm" and ("f" in letters or "--force" in args) and "--cached" not in args:
+        cmd.kind, cmd.why = "irreversible", f"deletes files with their uncommitted changes ({' '.join(words)})"
+    elif (sub == "checkout" and ("." in args or "--" in args[:-1])) or (    # `git checkout -- file`, `git restore file`
+            sub == "restore" and any(not a.startswith("-") for a in args)
+            and not (("--staged" in args or "S" in letters) and not ("--worktree" in args or "W" in letters))):
         cmd.kind, cmd.why = "irreversible", f"throws away uncommitted changes ({' '.join(words)})"
     elif sub == "stash" and args[:1] in (["drop"], ["clear"]):
         cmd.kind, cmd.why = "irreversible", f"deletes stashed work ({' '.join(words)})"
