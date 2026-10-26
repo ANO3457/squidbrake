@@ -116,6 +116,9 @@ def _split_top(line: str) -> tuple[list[str], list[str]]:
         if line.startswith("<(", i) or line.startswith(">(", i):
             end = _match_paren(line, i + 1)
             subs.append(line[i + 2:end]); buf.append(line[i:end + 1]); i = end + 1; continue
+        if ch == "(" and not "".join(buf).strip():     # a subshell, `(curl URL > x.sh) && bash x.sh`: read what's inside
+            end = _match_paren(line, i)
+            subs.append(line[i + 1:end]); i = end + 1; continue
         if ch == "`":
             end = line.find("`", i + 1); end = n if end < 0 else end
             subs.append(line[i + 1:end]); buf.append(line[i:end + 1]); i = end + 1; continue
@@ -456,7 +459,8 @@ def _gh_option(words: list[str], flag: str, short: str = "", boolean: bool = Fal
 
 def classify(words: list[str], raw: str = "", depth: int = 0) -> tuple[list[Command], list[str]]:
     """One simple command (already split into words). -> (commands, hidden-reasons)."""
-    words = _strip_wrappers(words)
+    words = words[1:] if words[:1] == ["{"] else words       # a group, `{ curl URL > x.sh; } && bash x.sh`
+    words = _strip_wrappers(words[:-1] if words[-1:] == ["}"] else words)
     if not words:
         return [], []
     prog = _program(words[0])

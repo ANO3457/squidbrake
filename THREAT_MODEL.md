@@ -101,8 +101,11 @@ These are known and not fixed. Some can't be fixed at this layer.
 1. **Code that isn't read before it runs.**
    - Shell and PowerShell scripts are read line by line before they run, however they're run: `bash x.sh`, `./x.sh`,
      a full path, `source x.sh`, `. x.sh`, `exec ./x.sh`, `sudo bash x.sh`, `pwsh -File x.ps1`.
-   - A Python, Node or other-language script isn't read. One that was already on disk before the conversation runs
-     like any other program: this is the limit.
+   - A Python, Node, Ruby, Perl or PHP script is read only for the commands it hands to a shell when they're written
+     out in it (`os.system("curl ... | sh")`, `subprocess.run([...])`, `execSync("...")`, Ruby backticks); those are
+     checked like the command itself. The rest of what it does isn't read, nor a command it builds at run time. One
+     that was already on disk before the conversation runs like any other program: this is the limit.
+     **(test)** `test_runs.py`, `test_reported_bypasses.py`
    - If the agent wrote it in the same conversation, with its edit tools or a shell command (`cat > x.py <<EOF`,
      `echo ... > x.js`, `tee`), it's held before it runs (`python x.py`, `node x.js`, `uv run x.py`).
    - If the agent changed it, it's flagged but runs (`edited_then_run: warn`), because fixing a script and running it

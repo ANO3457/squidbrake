@@ -13,10 +13,11 @@ The gateway reads each line like the command itself (server.py command_signals).
 stricter: what's found here is checked in addition to the command, never instead of it.
 
 Only reads files, never runs anything. Bounded: MAX_LINES lines and MAX_FILE_BYTES per file; anything it can't read
-is left out. Not read: scripts in other languages (python x.py, node x.js): if the agent wrote or changed one in this
-conversation, running it waits for a person instead (server.written_then_run); one that was already there runs like
-any other program. Also not read: recipes built at run time ($(shell ...), eval), make variables beyond simple
-`NAME = value` definitions.
+is left out. Scripts in other languages (python x.py, node x.js, ruby x.rb, ...): the commands they hand to a shell,
+when written out in the file: os.system("..."), subprocess.run("..." or [...]), child_process.exec/execSync("..."),
+system("...") and `...` in Ruby, Perl and PHP. A command built at run time can't be read here; if the agent wrote or
+changed the file in this conversation, running it waits for a person (server.written_then_run). Also not read:
+recipes built at run time ($(shell ...), eval), make variables beyond simple `NAME = value` definitions.
 
 `include` files are followed (a few levels deep, cycles skipped) and conditionals are read on BOTH sides, so a
 recipe hidden in an included file or in either branch of an `ifeq` is still checked.
@@ -253,6 +254,35 @@ def _node(words: list[str], cwd: Path) -> list[dict]:
 OTHER_LANGUAGES = re.compile(r"(?i)\.(py|pyw|js|mjs|cjs|ts|tsx|jsx|rb|pl|php|lua|r)$")   # not read as shell lines
 
 
+# A command handed to a shell, written out: os.system("curl URL | sh"), subprocess.run(["sh", "-c", "..."]), execSync(`...`)
+_SHELL_CALL = re.compile(r"\b(?:os\.(?:system|popen)|subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|"
+                         r"getstatusoutput)|(?:child_process\.)?(?:execSync|exec|spawnSync|spawn|execFileSync|execFile)|"
+                         r"system|shell_exec|passthru|popen|proc_open|Open3\.\w+|IO\.popen|Kernel\.system)\s*\(\s*"
+                         r"(?:[frbu]{0,2}(?P<q>[\"'`])(?P<s>(?:\\.|(?!(?P=q)).)*)(?P=q)|\[(?P<l>[^\]]*)\])", re.S | re.I)
+_STRING = re.compile(r"(?P<q>[\"'])(?P<s>(?:\\.|(?!(?P=q)).)*)(?P=q)")
+_BACKTICKS = re.compile(r"`([^`\n]+)`|%x\{([^}\n]+)\}")                      # Ruby, Perl, PHP
+
+
+def _shell_outs(path_word: str, cwd: Path) -> list[dict]:
+    """The commands a Python, Node, Ruby, Perl or PHP file hands to a shell, when they're written out in it."""
+    p = Path(os.path.expanduser(path_word.strip("'\"")))
+    p = p if p.is_absolute() else cwd / p
+    text = _read(p)
+    if text is None:
+        return []
+    lines = []
+    for m in _SHELL_CALL.finditer(text):
+        if m.group("s") is not None:
+            lines.append(m.group("s"))
+        else:                                   # ["sh", "-c", "curl URL | sh"] or ["curl", url]: the words as a line
+            words = [w.group("s") for w in _STRING.finditer(m.group("l"))]
+            lines.append(words[-1] if len(words) >= 3 and words[1] in ("-c", "/c") else " ".join(words))
+    if p.suffix.lower() in (".rb", ".pl", ".php"):
+        lines += [a or b for a, b in _BACKTICKS.findall(text)]
+    lines = [l.strip() for l in lines if l.strip()]
+    return [{"via": f"commands {p.name} hands to a shell", "lines": lines}] if lines else []
+
+
 def _script(path_word: str, cwd: Path) -> list[dict]:
     p = Path(os.path.expanduser(path_word.strip("'\"")))
     p = p if p.is_absolute() else cwd / p
@@ -285,8 +315,7 @@ def expand(line: str, cwd: str | None = None) -> list[dict]:
             continue
     sourced = [c.words[1] for c in reading.commands if c.program in ("source", ".") and len(c.words) > 1]
     for path_word in dict.fromkeys(reading.scripts + sourced):
-        if not OTHER_LANGUAGES.search(path_word):
-            out += _script(path_word, base)
+        out += _shell_outs(path_word, base) if OTHER_LANGUAGES.search(path_word) else _script(path_word, base)
     total, kept = 0, []
     for item in out:                                                # bounded, in order
         lines = [l[:1000] for l in item["lines"] if l][: MAX_LINES - total]
