@@ -646,3 +646,24 @@ def test_a_call_booked_on_calendly_is_saved_and_sent_once(insights, monkeypatch)
         raise RuntimeError("404")
     monkeypatch.setattr(insights_app, "calendly_get", unknown)
     assert insights.post("/v1/booking", json=body | {"invitee": inv + "-3"}).status_code == 422   # made up
+
+
+def test_first_action_counts_from_all_history_not_only_the_last_63_days(insights):
+    """The traction report reads 63 days for its weeks; a pilot's first action can be older than that."""
+    import uuid
+    import app as insights_app
+    from datetime import datetime, timedelta, timezone
+    admin = {"X-Admin-Key": os.environ["INSIGHTS_ADMIN_KEY"]}
+    code = insights.post("/v1/admin/pilots", headers=admin, json={"company": f"Old Pilot {uuid.uuid4().hex[:6]}"}).json()["code"]
+    iid = uuid.uuid4().hex
+    assert insights.post("/v1/pilot/join", json={"code": code, "install_id": iid, "version": "1.0"}).status_code == 200
+    ago = lambda n: (datetime.now(timezone.utc) - timedelta(days=n))
+    with insights_app.db() as c:
+        c.execute("UPDATE pilots SET created_at=? WHERE code=?", (ago(80).isoformat(timespec="seconds"), code))
+        for n in (70, 10):            # first action 10 days after it was created, then once more recently
+            c.execute("INSERT OR REPLACE INTO days (install_id, day, counts) VALUES (?,?,?)",
+                      (iid, ago(n).date().isoformat(), json.dumps({"events": 5})))
+        with_only_this = c.execute("SELECT code FROM pilots WHERE code != ?", (code,)).fetchall()
+    for (other,) in with_only_this:   # the median below is this pilot's alone
+        insights.delete(f"/v1/admin/pilots/{other}", headers=admin)
+    assert insights.get("/v1/admin/traction", headers=admin).json()["median_days_to_first_action"] == 10

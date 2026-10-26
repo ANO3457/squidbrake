@@ -999,6 +999,11 @@ def traction():
                                                "FROM installs")]
         since = (today - timedelta(days=63)).isoformat()
         days = c.execute("SELECT install_id, day, counts FROM days WHERE day >= ?", (since,)).fetchall()
+        # each install's first active day after its pilot was created, from all history (a day is only sent when
+        # something happened): a pilot older than the 63 days above still gets its real first action
+        firsts = c.execute("SELECT d.install_id, MIN(d.day) FROM days d JOIN installs i ON i.install_id = d.install_id "
+                           "JOIN pilots p ON p.code = i.code WHERE d.day >= substr(p.created_at, 1, 10) "
+                           "GROUP BY d.install_id").fetchall()
         raw_caught = c.execute("SELECT install_id, data FROM catches").fetchall()
         asks = [r[0] for r in c.execute("SELECT created_at FROM team_requests")]
     code_of = {i["install_id"]: i["code"] for i in installs}
@@ -1018,10 +1023,10 @@ def traction():
     this, last = weeks[-1], weeks[-2]
     # first action after the pilot was created (a gateway can also report days from before it joined)
     first_action = {}
-    for p in pilots:
-        after = [d for d in events_by.get(p["code"], {}) if d >= p["created_at"][:10]]
-        if after:
-            first_action[p["code"]] = min(after)
+    listed = {p["code"] for p in pilots}
+    for iid, day in firsts:
+        if (code := code_of.get(iid)) in listed and (code not in first_action or day < first_action[code]):
+            first_action[code] = day
     set_up = {i["code"] for i in installs} | {p["code"] for p in pilots if p["keys_revealed_at"]}
     # an agent is connected when the gateway says a hook is in place, or once any action has arrived
     connected_codes = {i["code"] for i in installs if json.loads(i["connected"] or "[]") or (i["total_events"] or 0)} \
