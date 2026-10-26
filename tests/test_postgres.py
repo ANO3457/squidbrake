@@ -40,7 +40,7 @@ def test_a_long_path_fits_where_sqlite_kept_it(c):
     with server.audited_tx() as conn:
         conn.execute(server.capabilities.insert().values(
             identity="pg-test", capability="after:pg-test", target=long, source_event=str(uuid.uuid4()),
-            created_at=server.utcnow(), expires_at=server.utcnow()))
+            created_at=server.utcnow(), expires_at="2999-01-01T00:00:00.000Z"))   # not purged mid-test as expired
         server.audit(conn, "pg-test", "test.long", long)
     with server.engine.connect() as conn:
         got = conn.execute(server.select(server.capabilities.c.target)
