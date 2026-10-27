@@ -210,11 +210,22 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+_sessions_seen: dict[str, float] = {}       # token hash -> when the database last said it was valid
+
+
 def _session_ok(token: str) -> bool:
+    """A remote database makes every check a round trip: one seen valid in the last minute isn't asked again
+    (sign-out and a new password clear this; one process, so it can't go stale elsewhere)."""
     if not token:
         return False
+    h = _token_hash(token)
+    if time.time() - _sessions_seen.get(h, 0) < 60:
+        return True
     with db() as c:
-        return bool(c.execute("SELECT 1 FROM sessions WHERE token_hash=? AND expires_at > ?", (_token_hash(token), now())).fetchone())
+        ok = bool(c.execute("SELECT 1 FROM sessions WHERE token_hash=? AND expires_at > ?", (h, now())).fetchone())
+    if ok:
+        _sessions_seen[h] = time.time()
+    return ok
 
 
 def _throttle(ip: str) -> None:
@@ -258,6 +269,7 @@ def login(body: LoginIn, request: Request):
 def logout(x_admin_key: str = Header(default="")):
     with _lock, db() as c:
         c.execute("DELETE FROM sessions WHERE token_hash=?", (_token_hash(x_admin_key),))
+    _sessions_seen.pop(_token_hash(x_admin_key), None)
     return {"ok": True}
 
 
@@ -277,6 +289,7 @@ def set_password(body: PasswordIn, request: Request):
     with _lock, db() as c:
         c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('admin_password', ?)", (_hash_password(body.new),))
         c.execute("DELETE FROM sessions")                     # every browser signs in again with the new password
+    _sessions_seen.clear()
     return {"ok": True}
 
 
@@ -946,14 +959,17 @@ def _fetch_json(url: str):
 
 
 _oss_refreshing = threading.Event()
+_oss_mem: dict = {}
 
 
 def oss_numbers() -> dict:
     """GitHub stars, forks and contributors, PyPI downloads last week: cached for an hour, kept if a fetch fails.
     A stale cache is returned at once and refreshed in the background: the admin page never waits on GitHub or PyPI."""
-    with db() as c:
-        row = c.execute("SELECT value FROM settings WHERE key='oss_cache'").fetchone()
-    cached = json.loads(row[0]) if row else {}
+    if not (cached := _oss_mem):                        # kept in memory too: no database round trip per page
+        with db() as c:
+            row = c.execute("SELECT value FROM settings WHERE key='oss_cache'").fetchone()
+        cached = json.loads(row[0]) if row else {}
+        _oss_mem.update(cached)
     if not cached:                      # the very first time: nothing to show yet, so wait for it once
         return _oss_fetch(cached)
     if time.time() - cached.get("at", 0) >= 3600 and not _oss_refreshing.is_set():
@@ -992,6 +1008,7 @@ def _oss_fetch(cached: dict) -> dict:
     fresh["at"] = time.time()
     with _lock, db() as c:
         c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('oss_cache', ?)", (json.dumps(fresh),))
+    _oss_mem.update(fresh)
     return fresh
 
 

@@ -59,22 +59,44 @@ def _rows(cursor):
     return lambda values: Row(names, values)
 
 
+WRITE = re.compile(r"(?i)\s*(INSERT|UPDATE|DELETE)\b")
+
+
 class Conn:
+    """Like Python's sqlite3: reads run on their own, a transaction opens at the first write and commits when the
+    block ends (rolls back on an error). Each BEGIN or COMMIT is a round trip to the database, which matters when it
+    is far away, and a page of reads needs neither."""
+
     def __init__(self, pool):
         self.pool = pool
 
     def __enter__(self):
         self._cm = self.pool.connection()
-        self.c = self._cm.__enter__()          # commits when the block ends, rolls back on an error
+        self.c = self._cm.__enter__()          # an autocommit connection (see pool)
+        self._tx = False
         return self
 
-    def __exit__(self, *exc):
-        return self._cm.__exit__(*exc)
+    def __exit__(self, et, *exc):
+        if self._tx:
+            self._tx = False
+            try:
+                self.c.execute("ROLLBACK" if et else "COMMIT")
+            except BaseException as e:
+                self._cm.__exit__(type(e), e, e.__traceback__)   # gives the connection back, then the error goes on
+                raise
+        return self._cm.__exit__(et, *exc)
+
+    def _begin(self, q: str):
+        if not self._tx and WRITE.match(q):
+            self.c.execute("BEGIN")
+            self._tx = True
 
     def execute(self, q: str, params=()):
+        self._begin(q)
         return self.c.execute(translate(q, bool(params)), tuple(params) or None)
 
     def executemany(self, q: str, seq):
+        self._begin(q)
         cur = self.c.cursor()
         cur.executemany(translate(q, True), [tuple(p) for p in seq])
         return cur
@@ -104,7 +126,7 @@ def pool(url: str, schema: str):
         conn.commit()
 
     return ConnectionPool(url, min_size=1, max_size=5, open=True, configure=configure, kwargs={
-        "row_factory": _rows, "cursor_factory": psycopg.ClientCursor, "prepare_threshold": None})
+        "autocommit": True, "row_factory": _rows, "cursor_factory": psycopg.ClientCursor, "prepare_threshold": None})
 
 
 if __name__ == "__main__":     # the translations this app relies on
@@ -113,6 +135,7 @@ if __name__ == "__main__":     # the translations this app relies on
     assert translate("INSERT OR REPLACE INTO days (install_id, day, counts) VALUES (?,?,?)", True).endswith(
         "ON CONFLICT (install_id, day) DO UPDATE SET counts = EXCLUDED.counts")
     assert "BIGINT GENERATED" in translate("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, n INTEGER)", False)
+    assert WRITE.match("INSERT OR REPLACE INTO x") and WRITE.match(" delete from x") and not WRITE.match("SELECT 1")
     r = Row(["a", "b"], [1, Decimal(3)])
     assert (r[0], r["b"], dict(r), list(r)) == (1, 3, {"a": 1, "b": 3}, [1, 3])
     print("ok")

@@ -341,6 +341,7 @@ def test_stale_oss_numbers_dont_wait_on_github(insights, monkeypatch):
     monkeypatch.setattr(insights_app, "_fetch_json", lambda url: release.wait(5) and ({"stargazers_count": 9}, {}))
     with insights_app.db() as c:
         c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('oss_cache', ?)", (json.dumps({"stars": 1, "at": 0}),))
+    insights_app._oss_mem.clear()
     assert insights_app.oss_numbers()["stars"] == 1          # the old numbers at once, while GitHub is still answering
     release.set()
 
@@ -356,7 +357,8 @@ def test_traction_metrics(insights, tmp_path, monkeypatch):
         {"data": {"last_week": 1355}} if "pypistats" in url else [], H()))
     with insights_app.db() as c:
         c.execute("DELETE FROM settings WHERE key='oss_cache'")
-    code = insights.post("/v1/admin/pilots", headers=admin, json={"company": "Investable"}).json()["code"]
+    insights_app._oss_mem.clear()
+    code =insights.post("/v1/admin/pilots", headers=admin, json={"company": "Investable"}).json()["code"]
     insights.get(f"/start/{code}")
     path_of = lambda url: "/" + url.split("://", 1)[1].split("/", 1)[1]
     monkeypatch.setattr(pilot.httpx, "post", lambda url, json, timeout: insights.post(path_of(url), json=json))
