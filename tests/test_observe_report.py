@@ -96,6 +96,18 @@ def test_report_says_what_it_did_not_measure():
     assert "0 of 5 stopped actions were marked legit (0.0%)" in weekly.markdown(r)
 
 
+def test_warned_counts_risks_let_through_not_info_notes(c):
+    """An allowed action with only an "info" note (how much it would change) wasn't warned about."""
+    before = weekly.build(server.engine, server.events, 7)["actions"]["warned"]
+    with server.audited_tx() as conn:
+        for effect in ("info", "warn"):
+            conn.execute(server.events.insert().values(
+                id=str(uuid.uuid4()), created_at=server.utcnow(), kind="tool_call", name="Bash", status="completed",
+                decision="allow", signals=json.dumps([{"check": "effect" if effect == "info" else "rename_command",
+                                                       "effect": effect, "message": "x"}])))
+    assert weekly.build(server.engine, server.events, 7)["actions"]["warned"] == before + 1
+
+
 def test_cli_report_and_feedback(c, capsys, tmp_path):
     held = c.post("/v1/events", headers=H, json={"name": "payments.send", "input": {"amount": 7}}).json()["event_id"]
     assert server.main(["feedback", held, "right"]) == 0

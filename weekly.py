@@ -59,7 +59,8 @@ def build(engine, events, days: int = 7) -> dict:
             other_kinds[r.kind] += 1
         out = _outcome(r)
         if not out:
-            counts["warned"] += bool(json.loads(r.signals or "[]"))
+            # a risk it noted and let through; not an "info" note such as how much the action would change
+            counts["warned"] += any(s.get("effect") == "warn" for s in json.loads(r.signals or "[]"))
             continue
         counts[out] += 1
         if r.approval_deadline and r.decided_by and r.decided_by != "timeout":
