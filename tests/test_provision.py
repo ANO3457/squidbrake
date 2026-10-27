@@ -55,13 +55,13 @@ def test_a_team_trial_gets_a_license_not_the_free_plan_and_a_running_one_gets_it
                      "plan": "team", "trial_ends": "2026-11-03", "license": "LIC1"})
     run = next(c for c in calls if c[0] == "run")
     assert not any("SQUIDBRAKE_PLAN" in a for a in run)    # after the trial it keeps blocking; only Team features stop
-    assert ("exec", "sbp-co2", "python", "server.py", "license", "set", "LIC1") in calls
+    assert ("exec", "sbp-co2", "python", "-c", provision.LICENSE_SET, "LIC1") in calls
     calls2, _ = fake(monkeypatch, ["true", "true"])
     running = {"code": "co-2", "subdomain": "co2", "dashboard": "https://co2.app.test", "keys_ready": True, "license": "LIC1"}
     provision.start(running)
     provision.start(running | {"license": "LIC2"})          # renewed: written again
     sets = [c for c in calls2 if c[:1] == ("exec",)]
-    assert sets == [("exec", "sbp-co2", "python", "server.py", "license", "set", "LIC2")]
+    assert sets == [("exec", "sbp-co2", "python", "-c", provision.LICENSE_SET, "LIC2")]
 
 
 def test_a_license_that_did_not_take_is_tried_again(monkeypatch):
@@ -89,7 +89,7 @@ def test_a_healthy_running_gateway_gets_its_license_from_the_loop(monkeypatch):
     monkeypatch.setattr(provision, "api", lambda path, body=None: {"pilots": [pilot]} if path == "/v1/admin/provision" else {})
     provision.tick()
     provision.tick()
-    assert [c for c in calls if c[:1] == ("exec",)] == [("exec", "sbp-co4", "python", "server.py", "license", "set", "L4")]
+    assert [c for c in calls if c[:1] == ("exec",)] == [("exec", "sbp-co4", "python", "-c", provision.LICENSE_SET, "L4")]
     assert not any(c[0] == "run" for c in calls)              # not restarted
 
 
@@ -180,3 +180,26 @@ def test_new_keys_never_end_up_in_an_error_or_with_a_founder_unless_they_work(mo
     with pytest.raises(RuntimeError):
         provision.new_keys({"code": "co-1", "subdomain": "co"})
     assert reports == []
+
+
+def test_the_license_is_written_without_loading_the_gateway(tmp_path, monkeypatch):
+    """`server.py license set` loaded a second gateway in a 192 MB container: OOM, a restart, and a retry every tick."""
+    import subprocess
+    import license
+    root = Path(__file__).resolve().parents[1]
+    code = provision.LICENSE_SET.replace("Path('/app/data')", f"Path({str(tmp_path)!r})")
+    monkeypatch.setattr(license, "check", lambda t: {"org": "Co"} if t == "GOOD" else None)
+    monkeypatch.setattr(sys, "argv", ["-c", "GOOD"])
+    exec(code, {})
+    f = tmp_path / license.FILE
+    assert f.read_text(encoding="utf-8") == "GOOD\n"
+    before = f.stat().st_mtime_ns
+    exec(code, {})                                   # the same license again: nothing written
+    assert f.stat().st_mtime_ns == before
+    monkeypatch.setattr(sys, "argv", ["-c", "FORGED"])
+    with pytest.raises(SystemExit):
+        exec(code, {})
+    probe = "import sys\ntry:\n    exec(sys.argv[1])\nexcept SystemExit:\n    pass\nprint('server' in sys.modules)"
+    out = subprocess.run([sys.executable, "-c", probe, code, "not-a-license"], cwd=root, capture_output=True, text=True,
+                         env={**__import__("os").environ, "PYTHONPATH": str(root)})
+    assert out.stdout.strip() == "False", out.stderr     # the gateway (server.py) is never imported

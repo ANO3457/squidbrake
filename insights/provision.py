@@ -181,11 +181,21 @@ def new_keys(p):
 _licensed = {}   # gateway name -> the license it was given (the server runs an older Python)
 
 
+# What `server.py license set` does, without loading the whole gateway: under the container's memory cap that second
+# copy of the gateway got the container OOM-killed, so it restarted, the license never counted as set, and the next
+# tick tried again (a restart loop on every licensed pilot). Unchanged license: nothing written.
+LICENSE_SET = ("import sys\nfrom pathlib import Path\nimport license\n"
+               "t = sys.argv[1].strip(); f = Path('/app/data') / license.FILE\n"
+               "if not license.check(t):\n    sys.exit('that license is not valid')\n"
+               "if not f.exists() or f.read_text(encoding='utf-8').strip() != t:\n"
+               "    f.write_text(t + '\\n', encoding='utf-8')\n")
+
+
 def give_license(name, p):
     """A hosted gateway has the Team plan: its license goes into its data folder (once, and again when renewed)."""
     if p.get("license") and _licensed.get(name) != p["license"]:
         try:
-            docker("exec", name, "python", "server.py", "license", "set", p["license"])
+            docker("exec", name, "python", "-c", LICENSE_SET, p["license"])
             _licensed[name] = p["license"]
         except Exception as e:      # an older gateway without `license`: tried again until it's upgraded
             log("license not set yet", name, str(e)[:120])
