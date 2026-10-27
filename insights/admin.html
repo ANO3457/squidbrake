@@ -738,10 +738,9 @@ function message(company, link, hosted) {
 async function load() {
   if (!key) return login();
   let d, me, asks, inv, fails, src, fun;
-  try { [d, me, asks, inv, fails, src] = await Promise.all([api("/v1/admin/overview"), api("/v1/admin/me"), api("/v1/admin/team-requests"),
-                                                api("/v1/admin/traction"), api("/v1/admin/install-reports"), api("/v1/admin/sources")]);
-        pl = await api("/v1/admin/contacts").catch(() => null);
-        fun = await api("/v1/admin/funnel").catch(() => null); }
+  try { [d, me, asks, inv, fails, src, pl, fun] = await Promise.all([api("/v1/admin/overview"), api("/v1/admin/me"),
+          api("/v1/admin/team-requests"), api("/v1/admin/traction"), api("/v1/admin/install-reports"), api("/v1/admin/sources"),
+          api("/v1/admin/contacts").catch(() => null), api("/v1/admin/funnel").catch(() => null)]); }
   catch (e) { if (e.message !== "unauthorized") app.innerHTML = `<main><p class="err">${esc(e.message)}</p></main>`; return; }
   const w = d.week, named = d.pilots.filter((p) => !p.community);   // the community row has its own section
   d_latest = d.latest_version || "";
@@ -1405,20 +1404,29 @@ squidbrake connect all --remove`
 
 async function create(e) {
   e.preventDefault();
-  const company = document.getElementById("nc").value.trim();
-  const r = await api("/v1/admin/pilots", { method: "POST", body: JSON.stringify({ company,
-    contact: document.getElementById("nk").value.trim(), note: document.getElementById("nn").value.trim(),
-    hosted: document.getElementById("nh").checked }) });
+  const company = document.getElementById("nc").value.trim(), btn = e.target.querySelector("button.primary");
+  btn.disabled = true;
+  let r;
+  try {
+    r = await api("/v1/admin/pilots", { method: "POST", body: JSON.stringify({ company,
+      contact: document.getElementById("nk").value.trim(), note: document.getElementById("nn").value.trim(),
+      hosted: document.getElementById("nh").checked }) });
+  } catch (err) { btn.disabled = false; if (err.message !== "unauthorized") alert(err.message); return; }
   const msg = message(company, r.link, !!r.dashboard);
-  await load();                                   // the new pilot shows in the table; then show its link
-  const res = document.getElementById("res");
-  res.style.display = "block";
-  res.innerHTML = `<div><b>Link for ${esc(company)}:</b> <a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.link)}</a></div>
-    <p class="sub">A message you can send (edit as you like):</p><textarea id="msg">${esc(msg)}</textarea>
-    <div class="row"><button class="btn primary" id="cm">Copy message</button><button class="btn" id="cl">Copy link</button>
-    <a class="btn" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">Open in WhatsApp</a></div>`;
-  document.getElementById("cm").onclick = (ev) => copy(document.getElementById("msg").value, ev.target);
-  document.getElementById("cl").onclick = (ev) => copy(r.link, ev.target);
+  // a dialog outside #app: the page reload below (and the 60s refresh) can't wipe it, and it shows before the reload ends
+  const dlg = document.createElement("dialog");
+  dlg.className = "pl-edit";
+  dlg.innerHTML = `<form method="dialog" style="display:block"><h3>Link for ${esc(company)}</h3>
+    <p class="hint"><a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.link)}</a></p>
+    <p class="hint">A message you can send (edit as you like):</p><textarea id="msg" style="width:100%;min-height:200px">${esc(msg)}</textarea>
+    <div class="row" style="margin-top:10px"><button class="btn primary" type="button" id="cm">Copy message</button><button class="btn" type="button" id="cl">Copy link</button>
+    <a class="btn" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">Open in WhatsApp</a><button class="btn">Close</button></div></form>`;
+  document.body.appendChild(dlg);
+  dlg.onclose = () => dlg.remove();
+  dlg.querySelector("#cm").onclick = (ev) => copy(dlg.querySelector("#msg").value, ev.target);
+  dlg.querySelector("#cl").onclick = (ev) => copy(r.link, ev.target);
+  dlg.showModal();
+  load();                                         // the new pilot shows in the table behind the dialog
 }
 
 async function copy(text, btn) {

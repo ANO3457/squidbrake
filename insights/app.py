@@ -478,10 +478,8 @@ def funnel(days: int = 30):
         signups = c.execute("SELECT COUNT(*) FROM pilots WHERE created_at >= ? AND note LIKE 'signup%'", (since,)).fetchone()[0]
         invited = c.execute("SELECT COUNT(*) FROM pilots WHERE created_at >= ? AND note LIKE '%from invite%'", (since,)).fetchone()[0]
         joined = {r[0]: r[1] for r in c.execute("SELECT install_id, joined_at FROM installs WHERE joined_at >= ?", (since,))}
-        first_catch = {}
-        for iid, t in c.execute("SELECT install_id, t FROM catches"):
-            if iid in joined and (iid not in first_catch or t < first_catch[iid]):
-                first_catch[iid] = t
+        first_catch = {iid: t for iid, t in c.execute("SELECT install_id, MIN(t) FROM catches GROUP BY install_id")
+                       if iid in joined}
         when = lambda t: datetime.fromisoformat(str(t).replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
         quick = sum(1 for iid, t in first_catch.items() if when(t) - when(joined[iid][:19]) <= timedelta(days=1))
         active = {iid for iid, counts in c.execute("SELECT install_id, counts FROM days WHERE day >= ?", (week,))
@@ -947,13 +945,31 @@ def _fetch_json(url: str):
         return json.loads(r.read() or b"null"), r.headers
 
 
+_oss_refreshing = threading.Event()
+
+
 def oss_numbers() -> dict:
-    """GitHub stars, forks and contributors, PyPI downloads last week: cached for an hour, kept if a fetch fails."""
+    """GitHub stars, forks and contributors, PyPI downloads last week: cached for an hour, kept if a fetch fails.
+    A stale cache is returned at once and refreshed in the background: the admin page never waits on GitHub or PyPI."""
     with db() as c:
         row = c.execute("SELECT value FROM settings WHERE key='oss_cache'").fetchone()
     cached = json.loads(row[0]) if row else {}
-    if cached and time.time() - cached.get("at", 0) < 3600:
-        return cached
+    if not cached:                      # the very first time: nothing to show yet, so wait for it once
+        return _oss_fetch(cached)
+    if time.time() - cached.get("at", 0) >= 3600 and not _oss_refreshing.is_set():
+        _oss_refreshing.set()
+        threading.Thread(target=_oss_refresh, args=(cached,), daemon=True).start()
+    return cached
+
+
+def _oss_refresh(cached: dict) -> None:
+    try:
+        _oss_fetch(cached)
+    finally:
+        _oss_refreshing.clear()
+
+
+def _oss_fetch(cached: dict) -> dict:
     fresh = dict(cached)
     try:
         repo, _ = _fetch_json(f"https://api.github.com/repos/{OSS_REPO}")
@@ -1004,7 +1020,9 @@ def traction():
         firsts = c.execute("SELECT d.install_id, MIN(d.day) FROM days d JOIN installs i ON i.install_id = d.install_id "
                            "JOIN pilots p ON p.code = i.code WHERE d.day >= substr(p.created_at, 1, 10) "
                            "GROUP BY d.install_id").fetchall()
-        raw_caught = c.execute("SELECT install_id, data FROM catches").fetchall()
+        # only this week's are read below
+        raw_caught = c.execute("SELECT install_id, data FROM catches WHERE t >= ?",
+                               ((today - timedelta(days=7)).isoformat(),)).fetchall()
         asks = [r[0] for r in c.execute("SELECT created_at FROM team_requests")]
     code_of = {i["install_id"]: i["code"] for i in installs}
     caught = [json.loads(d) for iid, d in raw_caught if code_of.get(iid) != COMMUNITY_CODE]   # pilots only, like the rest

@@ -333,6 +333,18 @@ def test_insights_keeps_only_known_catch_fields_and_shows_churn(insights, tmp_pa
     assert d["scorecard"]["stopped"] >= 1 and d["scorecard"]["saved"].get("commits", 0) >= 3
 
 
+def test_stale_oss_numbers_dont_wait_on_github(insights, monkeypatch):
+    import json
+    import threading
+    import app as insights_app
+    release = threading.Event()
+    monkeypatch.setattr(insights_app, "_fetch_json", lambda url: release.wait(5) and ({"stargazers_count": 9}, {}))
+    with insights_app.db() as c:
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('oss_cache', ?)", (json.dumps({"stars": 1, "at": 0}),))
+    assert insights_app.oss_numbers()["stars"] == 1          # the old numbers at once, while GitHub is still answering
+    release.set()
+
+
 def test_traction_metrics(insights, tmp_path, monkeypatch):
     import app as insights_app
     admin = {"X-Admin-Key": "admin-test-key"}
