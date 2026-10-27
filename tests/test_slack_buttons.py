@@ -66,7 +66,8 @@ def test_buttons_decide_one_event(c, monkeypatch, tmp_path):
     eid2 = held(c)
     assert click(c, server.make_link_token(eid2, "boss"), action="reject").status_code == 200
     assert c.get(f"/v1/events/{eid2}/decision", headers=H).json()["decision"] == "deny"
-    assert click(c, token[:-2] + "xx").status_code == 404                    # a forged token
+    forged = token[:-1] + ("A" if token[-1] != "A" else "B")                # always differs (a fixed "xx" sometimes didn't)
+    assert click(c, forged).status_code == 404                               # a forged token
     c.put("/v1/settings", headers=BOSS, json={"slack_signing_secret": ""})
 
 
