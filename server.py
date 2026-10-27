@@ -4861,7 +4861,7 @@ def apply_pack(pack: str, who: str = Depends(admin)):
     p = policy_edit.PACKS.get(pack)
     if p is None:
         raise HTTPException(404, "no such pack")
-    return _add_rules(p["yaml"], None, who, f"pack:{pack}")
+    return _add_rules(p["yaml"], p.get("before"), who, f"pack:{pack}")
 
 
 # --------------------------------------------------------------------------- MCP servers by URL (mcp_hub.py)

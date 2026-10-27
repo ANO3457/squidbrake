@@ -178,7 +178,8 @@ Rules with `action: review` hold the call until a person approves or rejects it:
   approved 5+ times in 30 days and never rejected (never for money, an agent's own setup, or what the command,
   data or chain checks held). *Allow it* adds the rule right before the one that held it, with a backup.
 - **Starter packs** for a support, finance, ops or back-office (CRM, orders, campaigns, warehouse) agent add a block of rules after the read rule, so blocks above
-  still win.
+  still win. The crypto pack (wallet keys, signing and sending transactions) goes before the read rule,
+  since reading a wallet key is itself a read.
 - **To your SIEM:** *Settings → Send to your SIEM* streams every decision to Splunk (HEC), Datadog (logs) or any HTTP
   endpoint, in batches in the background; or an OpenTelemetry collector (format `otlp`, its `/v1/logs` URL),
   as OTLP log records. Or set `SIEM_URL`, `SIEM_TOKEN`, `SIEM_FORMAT`.

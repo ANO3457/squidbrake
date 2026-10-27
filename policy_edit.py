@@ -1,12 +1,12 @@
 """
 Adding rules from the dashboard, safely: suggestions from what people keep approving, and starter packs per kind of
-agent (support, finance, ops).
+agent (support, finance, ops, back-office, crypto).
 
   suggestions()   calls held for a person, approved (or marked "legit") 5+ times in 30 days and never rejected, grouped by what they are
                   (a tool, or a shell command's program and subcommand): each comes with an `allow` rule to add.
                   Never suggested: money, an agent changing its own setup, or anything the command, history,
                   data or chain checks held (a rule can't and shouldn't open those).
-  PACKS           rule blocks for a support, finance or ops agent.
+  PACKS           rule blocks per kind of agent. A pack with "before" goes right before that rule, not after allow-reads.
   insert()        puts a block into rules.yaml right before the rule that held the call (so block rules above it
                   still win), keeps a backup, and puts the file back if the result doesn't load.
 """
@@ -216,6 +216,33 @@ PACKS: dict[str, dict] = {
     match:
       name: ["*warehouse*", "*bigquery*", "*snowflake*", "*redshift*", "*dbt*"]
       input_regex: '\\b(insert|update|delete|merge|create|drop|alter|truncate)\\b'
+"""},
+    "crypto": {"title": "Crypto and wallets", "about": "Wallet keys and on-chain payments, for agents working where "
+               "wallet keys live. Reading a key, signing or sending a transaction waits for a person.",
+               "before": "allow-reads",   # reading a wallet key is a read, so this has to come before allow-reads
+               "yaml": """\
+  - id: crypto-wallet-keys
+    action: review
+    reason: Reads a wallet's private key, keystore or seed phrase
+    match:
+      name: ["read*", "file*", "cat*", "grep*", "bash*", "shell*", "powershell*", "run_command*"]
+      input_regex: '(?i)keystore[\\\\/]|\\.keystore\\b|UTC--\\d|wallet\\.(dat|json)\\b|mnemonic\\.(txt|json)\\b|seed[-_ ]?phrase|solana[\\\\/]+id\\.json\\b'
+
+  - id: crypto-sign-and-send
+    action: review
+    reason: Signs or sends a crypto transaction from the terminal
+    timeout_seconds: 900
+    match:
+      name: ["bash*", "shell*", "powershell*", "run_command*"]
+      input_regex: '\\bcast\\s+(send|publish|mktx|wallet\\s+sign)\\b|\\bbitcoin-cli\\b[^"&;|]*\\s(send\\w*|sign\\w*|walletpassphrase|dumpprivkey|dumpwallet)\\b|\\bsolana\\s+(transfer|pay|withdraw-stake|delegate-stake)\\b|\\bspl-token\\s+(transfer|burn|close)\\b|\\bsui\\s+client\\s+(pay\\w*|transfer\\w*)\\b|\\baptos\\s+account\\s+transfer\\b|\\bnear\\s+(send|tokens)\\b|\\bforge\\s+script\\b[^"&;|]*\\s--broadcast\\b|\\bhardhat\\s+run\\b[^"&;|]*\\s--network\\s+mainnet\\b'
+
+  - id: crypto-agent-tools
+    action: review
+    reason: Moves crypto through an agent tool (a signed transaction, swap, trade, withdrawal, bridge or stake)
+    timeout_seconds: 900
+    match:
+      name: ["*send_transaction*", "*sign_transaction*", "*sign_message*", "*swap*", "*trade*", "*withdraw*",
+             "*bridge*", "*stake*", "*deploy_token*"]
 """},
 }
 
