@@ -5,11 +5,12 @@ squidbrake setup: everything a person needs on this computer, in one go (the ins
   2. the gateway, running in the background and at every login (they chose "set it all up", so no question here;
      turn it off any time: squidbrake service stop)
   3. every AI agent on this computer connected to it (Claude Code, Cursor, Codex, ... and their MCP servers)
-  4. a check of every hook, end to end (doctor)
+  4. a check of every hook, end to end (doctor), then two optional questions: a terminal guard, and rule packs for
+     what the agents touch besides code (support, finance, ops, back-office, crypto)
   5. the dashboard opened in the browser, already signed in the first time (the key goes in the address's #part,
      which never leaves this computer)
 
-  squidbrake setup [--port 8080] [--no-browser]
+  squidbrake setup [--port 8080] [--no-browser] [--packs support,finance]
 """
 from __future__ import annotations
 
@@ -43,6 +44,42 @@ def offer_terminal_guard(yes: bool) -> None:
         _say("OK", shell_guard.write(shell))
     except OSError as e:
         _say("!", f"Couldn't add the terminal guard ({e}). Later:  squidbrake shell-guard install --write")
+
+
+def offer_packs(chosen: str | None) -> None:
+    """Rules for what the agents touch besides code (policy_edit.PACKS), picked by number: no YAML to write."""
+    import policy_edit
+    import server
+    try:
+        have = set(server._rule_ids(server.RULES_PATH))
+    except Exception:       # no readable rules file: nothing to add to
+        return
+    packs = [(k, p) for k, p in policy_edit.PACKS.items() if not policy_edit._ids(p["yaml"]) <= have]
+    if not packs:
+        return
+    if chosen is None:
+        try:
+            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                return
+            print("\nDo your agents touch anything besides code? Each one adds rules for it (change them later in the "
+                  "dashboard, Settings > Rules):")
+            for i, (_, p) in enumerate(packs, 1):
+                print(f"  {i}. {p['title']}: {p['about']}")
+            answer = input("Numbers, e.g. 1,3 (Enter: just code): ")
+        except (EOFError, KeyboardInterrupt, OSError):
+            return
+        picked = [packs[int(n) - 1][0] for n in answer.replace(",", " ").split() if n.isdigit() and 0 < int(n) <= len(packs)]
+    else:
+        picked = [k for k in chosen.split(",") if k in dict(packs)]
+    for k in picked:
+        p = policy_edit.PACKS[k]
+        try:
+            server._add_rules(p["yaml"], p.get("before"), "setup", f"pack:{k}")
+            _say("OK", f"Added the {p['title']} rules")
+        except Exception as e:
+            _say("!", f"Couldn't add the {p['title']} rules ({getattr(e, 'detail', e)}). Later: dashboard, Settings > Rules")
+    if not picked:
+        print("  Just code. Later: dashboard, Settings > Rules > Starter packs")
 
 
 # ---- the dashboard: one command and one icon, whether it runs on this computer or is hosted
@@ -141,11 +178,14 @@ def dashboard_main(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import policy_edit
     p = argparse.ArgumentParser(prog="squidbrake setup", description="Set Squidbrake up on this computer, in one go.")
     p.add_argument("--port", type=int, default=int(os.getenv("PORT", "8080")))
     p.add_argument("--no-browser", action="store_true", help="don't open the dashboard")
     p.add_argument("--terminal-guard", action="store_true",
                    help="also warn in your own terminal before a command that can't be undone (without asking)")
+    p.add_argument("--packs", metavar="PACKS",
+                   help="add these rule packs without asking, comma-separated: " + ", ".join(policy_edit.PACKS))
     p.add_argument("--agent", dest="only", action="append", metavar="AGENT",
                    help="connect only this agent (repeat, or comma-separated; default: every one found here). "
                         "The installers pass SQUIDBRAKE_AGENTS")
@@ -219,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- your own terminal: the same warning before a command that can't be undone (asked; Enter means no)
     offer_terminal_guard(args.terminal_guard)
+    offer_packs(args.packs)
 
     # ---- 4. the keys (once) and the dashboard
     keys_now()

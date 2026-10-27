@@ -681,3 +681,45 @@ def test_first_action_counts_from_all_history_not_only_the_last_63_days(insights
     for (other,) in with_only_this:   # the median below is this pilot's alone
         insights.delete(f"/v1/admin/pilots/{other}", headers=admin)
     assert insights.get("/v1/admin/traction", headers=admin).json()["median_days_to_first_action"] == 10
+
+
+def test_an_email_on_the_first_run_gets_its_own_pilot_row(insights, tmp_path, monkeypatch):
+    """pip users who give their email show up under it, one row for all their computers, not in the community row."""
+    import app as insights_app
+    insights_app._joins.clear()          # earlier tests' joins count against this address's hourly limit
+    insights_app._joins.clear()          # earlier tests' joins count against this address's hourly limit
+    code = insights_app.COMMUNITY_CODE
+    path_of = lambda url: "/" + url.split("://", 1)[1].split("/", 1)[1]
+    monkeypatch.setattr(pilot.httpx, "post", lambda url, json, timeout: insights.post(path_of(url), json=json))
+    laptop, desktop, anon = tmp_path / "laptop", tmp_path / "desktop", tmp_path / "anon"
+    assert pilot.join(laptop, code, "http://localhost", True, "1.0", contact=("Dev@Firm.io", "Dev")) == 0
+    assert pilot.join(desktop, code, "http://localhost", True, "1.0", contact=("dev@firm.io", None)) == 0
+    assert pilot.join(anon, code, "http://localhost", True, "1.0") == 0
+    mine = pilot.load(laptop)["code"]
+    assert mine != code and pilot.load(desktop)["code"] == mine and pilot.load(anon)["code"] == code
+    assert pilot.load(laptop)["company"] == "dev@firm.io"          # the join echoes the email, never the name
+    assert pilot.send(laptop, {"version": "1.0", "days": {}}) is True
+    with insights_app.db() as c:
+        row = c.execute("SELECT contact, email FROM pilots WHERE code=?", (mine,)).fetchone()
+    assert (row["contact"], row["email"]) == ("Dev", "dev@firm.io")
+    # an email on a real pilot's code changes nothing: the founder's own code wins
+    real = insights.post("/v1/admin/pilots", headers={"X-Admin-Key": "admin-test-key"}, json={"company": "Real"}).json()["code"]
+    assert pilot.join(tmp_path / "real", real, "http://localhost", True, "1.0", contact=("x@y.io", None)) == 0
+    assert pilot.load(tmp_path / "real")["code"] == real
+
+
+def test_register_moves_an_anonymous_install_onto_its_own_row(insights, tmp_path, monkeypatch):
+    import app as insights_app
+    insights_app._joins.clear()          # earlier tests' joins count against this address's hourly limit
+    insights_app._joins.clear()          # earlier tests' joins count against this address's hourly limit
+    import telemetry
+    path_of = lambda url: "/" + url.split("://", 1)[1].split("/", 1)[1]
+    monkeypatch.setattr(pilot.httpx, "post", lambda url, json, timeout: insights.post(path_of(url), json=json))
+    monkeypatch.setattr(telemetry, "_pilot_dir", lambda: tmp_path)
+    monkeypatch.setattr(telemetry, "COMMUNITY_SERVER", "http://localhost")
+    monkeypatch.setattr(telemetry, "_identify", lambda *a, **k: None)
+    assert pilot.join(tmp_path, insights_app.COMMUNITY_CODE, "http://localhost", True, "1.0") == 0
+    before = pilot.load(tmp_path)["install_id"]
+    assert telemetry.register(["late@firm.io", "--yes"], "1.0") == 0
+    after = pilot.load(tmp_path)
+    assert after["code"] != insights_app.COMMUNITY_CODE and after["install_id"] == before   # same install, its history kept

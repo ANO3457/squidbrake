@@ -312,6 +312,9 @@ class JoinIn(BaseModel):
     version: str = Field(default="", max_length=40)
     os: str = Field(default="", max_length=80)
     ref: str = Field(default="", pattern=r"^([a-z0-9][a-z0-9-]{0,29})?$")
+    # the work email given on the first run (telemetry.py): a community install with one gets its own pilot row
+    email: str = Field(default="", max_length=254, pattern=r"^([^@\s]{1,64}@[^@\s]+\.[^@\s]{2,})?$")
+    name: str = Field(default="", max_length=120)
 
 
 class PingIn(BaseModel):
@@ -388,11 +391,25 @@ def join(j: JoinIn, request: Request):
         ref = j.ref if j.ref in REF_WORDS or (j.ref and c.execute(
             "SELECT 1 FROM link_clicks WHERE channel=? LIMIT 1", (j.ref,)).fetchone()) else ""
         j = j.model_copy(update={"ref": ref})
+        if p["code"] == COMMUNITY_CODE and j.email:
+            p = _own_pilot(c, j.email.lower(), j.name)
         c.execute("""INSERT INTO installs (install_id, code, joined_at, version, os, ref) VALUES (?,?,?,?,?,?)
                      ON CONFLICT(install_id) DO UPDATE SET code=excluded.code, left_at=NULL, version=excluded.version,
                      os=excluded.os, ref=COALESCE(excluded.ref, installs.ref)""",
                   (j.install_id, p["code"], now(), j.version, j.os, j.ref or None))
-    return {"company": p["company"]}
+    return {"company": p["company"], "code": p["code"]}
+
+
+def _own_pilot(c, email: str, name: str):
+    """The pilot of someone who gave their email on the first run: the same row for every computer they install on."""
+    row = c.execute("SELECT * FROM pilots WHERE email=? AND note='first run' ORDER BY created_at LIMIT 1", (email,)).fetchone()
+    if row:
+        return row
+    slug = re.sub(r"[^a-z0-9]+", "-", email.split("@")[0])[:20].strip("-") or "user"
+    code = f"{slug}-{secrets.token_hex(6)}"
+    c.execute("INSERT INTO pilots (code, company, contact, note, created_at, email) VALUES (?,?,?,?,?,?)",
+              (code, email, name or None, "first run", now(), email))   # company=email: join echoes it, never the name
+    return c.execute("SELECT * FROM pilots WHERE code=?", (code,)).fetchone()
 
 
 @app.post("/v1/pilot/leave")

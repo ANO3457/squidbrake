@@ -82,3 +82,29 @@ def test_no_agent_on_this_computer_is_said(world, capsys):
     world["agents_here"] = []
     assert onboard.main(["--no-browser"]) == 0
     assert "Installed, but no agent connected yet" in capsys.readouterr().out
+
+
+def test_setup_adds_the_rule_packs_asked_for(world, monkeypatch, tmp_path, capsys):
+    import server
+    added = []
+    monkeypatch.setattr(server, "_rule_ids", lambda path: ["allow-reads"])
+    monkeypatch.setattr(server, "_add_rules", lambda block, before, who, what: added.append((what, before, who)))
+    assert onboard.main(["--packs", "finance,crypto,nope"]) == 0
+    assert added == [("pack:finance", None, "setup"), ("pack:crypto", "allow-reads", "setup")]
+    assert "Added the Finance agent rules" in capsys.readouterr().out
+
+
+def test_setup_asks_which_packs_in_a_terminal(world, monkeypatch, capsys):
+    import policy_edit
+    import server
+    added = []
+    have = list(policy_edit._ids(policy_edit.PACKS["support"]["yaml"]))     # already added: not offered again
+    monkeypatch.setattr(server, "_rule_ids", lambda path: have)
+    monkeypatch.setattr(server, "_add_rules", lambda block, before, who, what: added.append(what))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+    answers = iter(["n", "1, 9"])          # the terminal guard: no; then pack 1 (finance, since support is there)
+    monkeypatch.setattr("builtins.input", lambda q="": next(answers))
+    onboard.offer_terminal_guard(False)
+    onboard.offer_packs(None)
+    assert added == ["pack:finance"] and "Support agent" not in capsys.readouterr().out

@@ -145,7 +145,7 @@ def _pilot_dir() -> Path:
     return Path(home) / "data"
 
 
-def _share_counts(on: bool, version: str, ref: str | None = None) -> bool:
+def _share_counts(on: bool, version: str, ref: str | None = None, contact: tuple[str, str | None] | None = None) -> bool:
     """Join (or leave) the community pilot, so the gateway sends its counts. A real pilot's membership is kept.
     Returns whether this install is now sharing counts (False when joining failed, e.g. no network)."""
     import contextlib
@@ -156,7 +156,7 @@ def _share_counts(on: bool, version: str, ref: str | None = None) -> bool:
         mine = pilot.load(home)
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             if on and not mine:
-                pilot.join(home, COMMUNITY_CODE, COMMUNITY_SERVER, True, version, ref=ref)
+                pilot.join(home, COMMUNITY_CODE, COMMUNITY_SERVER, True, version, ref=ref, contact=contact)
             elif not on and mine and mine.get("code") == COMMUNITY_CODE:
                 pilot.leave(home)
         home.mkdir(parents=True, exist_ok=True)     # older versions' `connect all` asked about counts: it's settled
@@ -204,7 +204,7 @@ def _first_run(cfg: dict, version: str) -> dict:
     _save(cfg)
     if contact := _ask_contact():
         _identify(cfg, contact[0], version, name=contact[1])
-    cfg["counts_joined"] = _share_counts(True, version, cfg.get("ref"))
+    cfg["counts_joined"] = _share_counts(True, version, cfg.get("ref"), contact)
     if not cfg["counts_joined"]:
         cfg["counts_retry"] = _today()          # tried today: the next try is tomorrow (see maybe)
     _save(cfg)
@@ -255,7 +255,8 @@ def maybe(argv: list[str], version: str) -> None:
         # joining the counts failed (offline, server down): try again, once a day, until it works.
         # Someone who later left (squidbrake pilot leave) has counts_joined True, so they're never joined again.
         cfg["counts_retry"] = _today()
-        cfg["counts_joined"] = _share_counts(True, version, cfg.get("ref"))
+        cfg["counts_joined"] = _share_counts(True, version, cfg.get("ref"),
+                                             (cfg["email"], None) if cfg.get("email") else None)
         _save(cfg)
     if cfg.get("enabled") and not cfg.get("ref") and (ref := ref_from_env()):
         cfg["ref"] = ref                    # said yes before, then installed again from a named link
@@ -288,6 +289,15 @@ def register(argv: list[str], version: str) -> int:
         print("Nothing was sent.")
         return 0
     _identify(load(), email, version, name=name, company=company)
+    try:
+        import pilot
+        if (pilot.load(_pilot_dir()) or {}).get("code") == COMMUNITY_CODE:    # anonymous counts: under this email now
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                # same install id: the server moves this install onto the email's own pilot
+                pilot.join(_pilot_dir(), COMMUNITY_CODE, COMMUNITY_SERVER, True, version, contact=(email, name))
+    except Exception:     # never break a command over this
+        pass
     print("Sent. Thanks, the team will be in touch.")
     return 0
 
