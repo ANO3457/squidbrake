@@ -47,3 +47,7 @@ def test_only_the_matched_words_leave_the_machine(proj):
     (proj / "q.json").write_text('{"token":"rw_live_SECRET","query":"mutation { volumeDelete(volumeId: 1) }"}')
     found = json.dumps(runs.expand(f"curl -X POST {R} --data @q.json", str(proj)))
     assert "volumeDelete" in found and "SECRET" not in found
+    # text between `mutation` and `{` (a variable's default here) stays on this machine too
+    (proj / "q.json").write_text('{"query":"mutation Wipe($t: String = \\"rw_live_SECRET2\\") { volumeDelete(volumeId: 1) }"}')
+    found = runs.expand(f"curl -X POST {R} --data @q.json", str(proj))
+    assert "SECRET2" not in json.dumps(found) and found[0]["lines"] == ["curl -d 'mutation { volumeDelete('"]

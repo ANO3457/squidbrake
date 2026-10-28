@@ -287,7 +287,12 @@ def _api_delete(text: str, name: str) -> list[dict]:
     """A GraphQL delete in a file (requests.post / fetch with mutation { volumeDelete(...) }, a curl -d @body.json),
     as a curl line the gateway holds. Only the matched words leave this machine, never the file (it may hold keys)."""
     m = commands.API_DELETE.search(text)
-    return [{"via": f"the API request in {name}", "lines": [f"curl -d '{m.group(0).replace(chr(39), '')}'"]}] if m else []
+    if not m:
+        return []
+    # only the operation's name: the match can span whatever sits between `mutation` and `{` (variables, defaults)
+    op = re.search(r"\{\s*([$\w{}]+)\s*\($", m.group(0))
+    sent = f"mutation {{ {op.group(1)}(" if op else m.group(0)[:80].replace("'", "")
+    return [{"via": f"the API request in {name}", "lines": [f"curl -d '{sent}'"]}]
 
 
 def _request_bodies(line: str, cwd: Path) -> list[dict]:
