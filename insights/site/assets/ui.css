@@ -22,7 +22,7 @@
 .story .result{display:flex;align-items:baseline;gap:10px;margin:18px 0 0;padding:14px 0 0;border-top:1px solid var(--line)}
 .story .result b{font-size:1.7rem;font-weight:600;letter-spacing:-.04em;line-height:1;color:#C2410C;white-space:nowrap}
 .story .result span{font:400 .76rem var(--mono);color:var(--muted);line-height:1.35}
-.big-numbers{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;margin:0}
+.big-numbers{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;margin:0 0 18px}
 .big-numbers>div{padding:18px;border-radius:14px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line)}
 .big-numbers b{display:block;font-size:2rem;font-weight:600;letter-spacing:-.045em;line-height:1;color:#C2410C;margin:0 0 8px}
 .big-numbers span{display:block;font:400 .78rem var(--mono);color:var(--muted);line-height:1.4}
@@ -53,3 +53,13 @@ details.more>.body dl.facts{margin:0}
 .tiles.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media (max-width:860px){.tiles.c3{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.tiles.c3{grid-template-columns:1fr}}
+.fig{margin:20px 0;padding:20px;border-radius:14px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line)}
+.fig .scroll{overflow-x:auto}
+.fig svg{display:block;width:100%;min-width:560px;height:auto;font-family:var(--sans)}
+.fig figcaption{margin:12px 0 0;color:var(--muted);font-size:.9rem}
+.fig .t{fill:var(--ink);font-size:15px;font-weight:500}
+.fig .s{fill:var(--muted);font-size:12.5px}
+.fig .grid{stroke:var(--line);stroke-width:1}
+.fig .bar{fill:var(--muted)}
+.fig .bar-hi{fill:var(--accent)}
+details.more+p,details.more+ul{margin-top:18px}
