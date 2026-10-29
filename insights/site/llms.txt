@@ -29,6 +29,7 @@ Coding agents (Claude Code, Cursor, Codex, Gemini CLI, VS Code Copilot, Antigrav
 - [Human-in-the-loop approval for AI agents](https://squidbrake.com/blog/human-in-the-loop-approval-for-ai-agents)
 - [MCP security checklist](https://squidbrake.com/blog/mcp-security-checklist)
 - [EU AI Act Article 14: human oversight for AI agents](https://squidbrake.com/blog/eu-ai-act-article-14-human-oversight-ai-agents)
+- [Squidbrake vs Kontext](https://squidbrake.com/blog/squidbrake-vs-kontext): human approval, open source, MCP, self-hosting, price
 
 ## Contact
 
