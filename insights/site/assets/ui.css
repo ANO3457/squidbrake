@@ -73,3 +73,4 @@ details.more+p,details.more+ul{margin-top:18px}
 .timeline time{font:400 .8rem var(--mono);color:var(--muted)}
 .timeline p{margin:0;max-width:70ch}
 @media (max-width:560px){.timeline li{grid-template-columns:auto 1fr;gap:4px 10px}.timeline li p{grid-column:1/-1}}
+@media (max-width:640px){main table{display:block;max-width:100%;overflow-x:auto}}
