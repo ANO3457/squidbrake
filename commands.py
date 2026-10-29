@@ -222,6 +222,9 @@ SQL_RENAME = re.compile(r"\b(alter\s+(table|database|schema|view|index)\s+[\w.\"
                         r"\.renameCollection\s*\(|\brename\b\s+\S+\s+\S+\s*$)", re.I)
 REDIS_DELETE = {"del", "unlink", "hdel", "srem", "zrem", "lrem", "xdel", "getdel"}
 HTTP_CLIS = {"curl", "wget", "http", "https", "xh", "httpie", "invoke-webrequest", "iwr", "invoke-restmethod", "irm"}
+DNS_CLIS = {"ping", "ping6", "nslookup", "dig", "host", "resolve-dnsname"}
+DNS_SUBST = re.compile(r"\$\([^\)]+\)|`[^`]+`|\$env:[A-Za-z0-9_]+|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}]+\}")
+ENCODED_DNS_LABEL = re.compile(r"^(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9_]{20,}$")   # hex/base64: letters and digits, no hyphens (long ordinary names have them)
 API_DELETE = re.compile(r"\bmutation\b[^{]*\{\s*\w*(delete|destroy|remove|drop|purge|wipe)\w*\s*\(|"
                         r"\bmutation\b[^{]*\{\s*\$\{?\w+\}?\s*\(|"      # mutation { $OP(...) }: named only at run time
                         r"\"(action|op|operation)\"\s*:\s*\"(delete|destroy|remove|drop)\w*\"", re.I)
@@ -568,6 +571,26 @@ def _gh_option(words: list[str], flag: str, short: str = "", boolean: bool = Fal
     return value.lower()
 
 
+def _suspicious_dns(prog: str, words: list[str], raw: str = "") -> bool:
+    if prog not in DNS_CLIS:
+        return False
+    text = raw if raw else " ".join(words)
+    args_text = text[len(words[0]):] if text.lower().startswith(words[0].lower()) else text
+    if DNS_SUBST.search(args_text):
+        return True
+    for w in words[1:]:
+        w_clean = w.strip("\"'")
+        if w_clean.startswith(("-", "+")) and "." not in w_clean:
+            continue
+        if "=" in w_clean and "." not in w_clean:
+            continue
+        for label in w_clean.split("."):
+            l = label.strip("\"'")
+            if ENCODED_DNS_LABEL.match(l):
+                return True
+    return False
+
+
 def _starts_automatically(prog: str, lower: list[str]) -> str | None:
     """Changes that schedule work after this command has finished."""
     if prog == "schtasks":
@@ -597,7 +620,6 @@ def _starts_automatically(prog: str, lower: list[str]) -> str | None:
         if "-e" in lower or "-" in lower[1:] or _positional(lower):
             return "installs or edits scheduled commands that will run later (crontab)"
     return None
-
 
 
 def classify(words: list[str], raw: str = "", depth: int = 0) -> tuple[list[Command], list[str]]:
@@ -816,6 +838,11 @@ def classify(words: list[str], raw: str = "", depth: int = 0) -> tuple[list[Comm
         method = method or next((w[2:].upper() for w in words[1:] if re.match(r"^-X[A-Za-z]+$", w)), "")
         if method == "DELETE" or API_DELETE.search(text):
             cmd.kind, cmd.why = "irreversible", f"sends an API request that deletes something ({' '.join(words[:3])[:80]})"
+        return [cmd], []
+
+    # ---- DNS lookups that carry data out (CVE-2025-55284 DNS exfiltration)
+    if _suspicious_dns(prog, words, raw):
+        cmd.kind, cmd.why = "irreversible", "sends data out inside a DNS name"
         return [cmd], []
 
     # ---- databases
@@ -1202,6 +1229,7 @@ KNOWN = READ_ONLY | SHELLS | POWERSHELLS | {
     "java", "javac", "mvn", "gradle", "gradlew", "kotlin", "dotnet", "msbuild", "nuget", "ruby", "gem", "bundle",
     "rake", "rails", "php", "composer", "perl", "swift", "xcodebuild", "pod", "flutter", "dart", "docker", "podman",
     "kubectl", "helm", "terraform", "tofu", "pulumi", "ansible", "aws", "gcloud", "az", "curl", "wget", "ssh", "scp",
+    "ping", "ping6", "nslookup", "dig", "host", "resolve-dnsname",
     "rsync", "tar", "zip", "unzip", "gzip", "gunzip", "mkdir", "touch", "cp", "mv", "ln", "chmod", "chown", "rm",
     "rmdir", "sed", "awk", "xargs", "tee", "env", "export", "set", "unset", "source", ".", "alias", "history", "clear",
     "code", "cursor", "open", "start", "explorer", "claude", "codex", "gemini", "squidbrake", "psql", "mysql",
